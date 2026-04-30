@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[submission] start: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+echo "[submission] cwd: $(pwd)"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+fi
+echo "[submission] Python executable: ${PYTHON_BIN}"
+echo "[submission] Python version: $(${PYTHON_BIN} --version 2>&1)"
+${PYTHON_BIN} - <<'PY'
+try:
+    import torch
+
+    print(f"[submission] torch version: {torch.__version__}")
+    print(f"[submission] torch cuda available: {torch.cuda.is_available()}")
+    print(f"[submission] torch cuda device count: {torch.cuda.device_count()}")
+    if torch.cuda.is_available():
+        print(f"[submission] torch cuda device 0: {torch.cuda.get_device_name(0)}")
+except Exception as exc:
+    print(f"[submission] torch import check failed: {exc}")
+PY
+SUBMISSION_INPUT_ROOT="${INPUT_ROOT:-/input}"
+SUBMISSION_OUTPUT_DIR="${OUTPUT_DIR:-/output}"
+SUBMISSION_OUTPUT_JSON="${SUBMISSION_OUTPUT_DIR}/result.json"
+SUBMISSION_WORK_DIR="${WORK_DIR:-/tmp/kybelix_submission_work}"
+SUBMISSION_CONFIG="/tmp/kybelix_submission_config.json"
+SUBMISSION_CANDIDATE="${CANDIDATE:-c03}"
+case "${SUBMISSION_CANDIDATE}" in
+  c03)
+    if [ -z "${SUBMISSION_SOURCE_CONFIG:-}" ]; then
+      if [ -f "configs/submission_c03.json" ]; then
+        SUBMISSION_SOURCE_CONFIG="configs/submission_c03.json"
+      else
+        SUBMISSION_SOURCE_CONFIG="configs/submission.json"
+      fi
+    fi
+    ;;
+  tsvit)
+    if [ -z "${SUBMISSION_SOURCE_CONFIG:-}" ]; then
+      if [ -f "configs/submission_tsvit.json" ]; then
+        SUBMISSION_SOURCE_CONFIG="configs/submission_tsvit.json"
+      else
+        SUBMISSION_SOURCE_CONFIG="configs/submission.json"
+      fi
+    fi
+    ;;
+  *)
+    echo "[submission] ERROR: CANDIDATE must be c03 or tsvit, got ${SUBMISSION_CANDIDATE}" >&2
+    exit 1
+    ;;
+esac
+echo "[submission] input root: ${SUBMISSION_INPUT_ROOT}"
+echo "[submission] output json: ${SUBMISSION_OUTPUT_JSON}"
+echo "[submission] work dir: ${SUBMISSION_WORK_DIR}"
+echo "[submission] candidate: ${SUBMISSION_CANDIDATE}"
+echo "[submission] source config: ${SUBMISSION_SOURCE_CONFIG}"
+echo "[submission] repository files:"
+find . -maxdepth 2 -type f \
+  | sed 's#^\./##' \
+  | sort \
+  | grep -E '^(inference.py|run.sh|Dockerfile|configs/|scripts/|models/|data/|preprocessing/|training/|checkpoints/|artifacts/normalization/)' \
+  | head -120
+
+echo "[submission] input files:"
+find -L "${SUBMISSION_INPUT_ROOT}" -maxdepth 2 -type f | sort | head -120 || true
+
+if [ -f "${SUBMISSION_INPUT_ROOT}/test_point.csv" ]; then
+  echo "[submission] using points file: ${SUBMISSION_INPUT_ROOT}/test_point.csv"
+elif [ -f "${SUBMISSION_INPUT_ROOT}/points_test.csv" ]; then
+  echo "[submission] using points file: ${SUBMISSION_INPUT_ROOT}/points_test.csv"
+else
+  echo "[submission] ERROR: missing ${SUBMISSION_INPUT_ROOT}/test_point.csv or ${SUBMISSION_INPUT_ROOT}/points_test.csv" >&2
+  exit 1
+fi
+
+echo "[submission] region_test TIFF count: $(find -L "${SUBMISSION_INPUT_ROOT}/region_test" -maxdepth 1 -type f -name '*.tiff' 2>/dev/null | wc -l | tr -d ' ')"
+echo "[submission] checkpoints:"
+ls -lh checkpoints/
+
+${PYTHON_BIN} - <<PY
+import json
+from pathlib import Path
+
+config = json.loads(Path("${SUBMISSION_SOURCE_CONFIG}").read_text())
+config["input_root"] = "${SUBMISSION_INPUT_ROOT}"
+config["output_json"] = "${SUBMISSION_OUTPUT_JSON}"
+config["work_dir"] = "${SUBMISSION_WORK_DIR}"
+Path("${SUBMISSION_OUTPUT_DIR}").mkdir(parents=True, exist_ok=True)
+Path("${SUBMISSION_WORK_DIR}").mkdir(parents=True, exist_ok=True)
+Path("${SUBMISSION_CONFIG}").write_text(json.dumps(config, indent=2))
+print("[submission] runtime config:")
+print(Path("${SUBMISSION_CONFIG}").read_text())
+PY
+
+echo "[submission] validating package"
+${PYTHON_BIN} scripts/validate_submission.py --config "${SUBMISSION_CONFIG}"
+
+echo "[submission] running inference"
+${PYTHON_BIN} inference.py --config "${SUBMISSION_CONFIG}"
+
+test -f "${SUBMISSION_OUTPUT_JSON}"
+echo "[submission] wrote ${SUBMISSION_OUTPUT_JSON}"
+${PYTHON_BIN} - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ.get("OUTPUT_DIR", "/output")) / "result.json"
+data = json.loads(path.read_text())
+print(f"[submission] result rows: {len(data)}")
+for index, (key, value) in enumerate(data.items()):
+    if index >= 3:
+        break
+    print(f"[submission] sample result {index + 1}: {key} -> {value}")
+PY
+echo "[submission] done: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"

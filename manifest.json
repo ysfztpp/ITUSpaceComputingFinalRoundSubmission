@@ -1,0 +1,24 @@
+{
+  "bundle_name": "project_organized",
+  "primary_candidate": "c03",
+  "candidates": {
+    "c03": {
+      "checkpoint": "checkpoints/c03_full_data_model.pt",
+      "model_type": "query_cnn_transformer",
+      "checkpoint_mb": 12.55,
+      "params_total": 3275146,
+      "fixed_epoch": 75,
+      "training_config": "configs/train_full_data_c03_epoch75.json",
+      "submission_config": "configs/submission_c03.json"
+    },
+    "tsvit": {
+      "checkpoint": "checkpoints/c29_tsvit_model.pt",
+      "model_type": "query_tsvit",
+      "checkpoint_mb": 88.51,
+      "params_total": 23170666,
+      "fixed_epoch": 42,
+      "training_config": "configs/train_full_data_c29_tsvit_relative_aux_crop_submission.json",
+      "submission_config": "configs/submission_tsvit.json"
+    }
+  }
+}

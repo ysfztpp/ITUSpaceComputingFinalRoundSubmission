@@ -1,0 +1,63 @@
+{
+  "generated_at_unix": 1777573901.8238778,
+  "reports": [
+    {
+      "candidate": "c03",
+      "model_type": "query_cnn_transformer",
+      "device": "cpu",
+      "torch_version": "2.8.0",
+      "checkpoint": "/Users/yusuf/Desktop/finalround/project_organized/checkpoints/c03_full_data_model.pt",
+      "checkpoint_mb": 12.55,
+      "checkpoint_epoch": 75,
+      "checkpoint_metric": "fixed_epoch_full_data",
+      "parameter_count": 3275146,
+      "model_config": {
+        "in_channels": 24,
+        "patch_size": 15,
+        "num_crop_classes": 3,
+        "num_phenophase_classes": 7,
+        "aux_feature_dim": 0
+      },
+      "load_seconds": 0.00920570899999995,
+      "synthetic_forward": {
+        "batch_size": 64,
+        "time_steps": 29,
+        "warmup": 2,
+        "iterations": 5,
+        "median_forward_ms": 188.39716699999997,
+        "mean_forward_ms": 190.53498380000005,
+        "median_rows_per_second": 339.70786832479286,
+        "mean_rows_per_second": 335.8963205790032
+      }
+    },
+    {
+      "candidate": "tsvit",
+      "model_type": "query_tsvit",
+      "device": "cpu",
+      "torch_version": "2.8.0",
+      "checkpoint": "/Users/yusuf/Desktop/finalround/project_organized/checkpoints/c29_tsvit_model.pt",
+      "checkpoint_mb": 88.51,
+      "checkpoint_epoch": 42,
+      "checkpoint_metric": "fixed_epoch_full_data",
+      "parameter_count": 23170666,
+      "model_config": {
+        "in_channels": 24,
+        "patch_size": 15,
+        "num_crop_classes": 3,
+        "num_phenophase_classes": 7,
+        "aux_feature_dim": 135
+      },
+      "load_seconds": 0.03541337500000008,
+      "synthetic_forward": {
+        "batch_size": 32,
+        "time_steps": 29,
+        "warmup": 2,
+        "iterations": 5,
+        "median_forward_ms": 808.7419590000006,
+        "mean_forward_ms": 810.0151836,
+        "median_rows_per_second": 39.56762678613534,
+        "mean_rows_per_second": 39.505432302861834
+      }
+    }
+  ]
+}

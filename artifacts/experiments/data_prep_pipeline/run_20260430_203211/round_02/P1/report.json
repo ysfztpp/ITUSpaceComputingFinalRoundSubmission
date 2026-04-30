@@ -1,0 +1,219 @@
+{
+  "output_json": "/Users/yusuf/Desktop/finalround/project_organized/artifacts/experiments/data_prep_pipeline/run_20260430_203211/round_02/P1/output/result.json",
+  "queries": 21,
+  "unique_output_keys": 21,
+  "duplicate_output_key_rows": 0,
+  "duplicate_output_key_conflicts": 0,
+  "device": "cpu",
+  "torch_version": "2.8.0",
+  "torch_cuda_available": false,
+  "torch_cuda_device_count": 0,
+  "torch_cuda_device_name": null,
+  "crop_checkpoint": "/Users/yusuf/Desktop/finalround/project_organized/checkpoints/optimization/c03_working_model.pt",
+  "stage_checkpoint": "/Users/yusuf/Desktop/finalround/project_organized/checkpoints/optimization/c03_working_model.pt",
+  "ensemble_checkpoints": [],
+  "use_gdal_env": false,
+  "gdal_env": {},
+  "use_in_memory_patches": false,
+  "write_patch_npz": true,
+  "compressed_patch_npz": true,
+  "fast_inventory": false,
+  "use_crop_consistency": true,
+  "use_point_stage_bijection": false,
+  "crop_model_uses_mask_channels": true,
+  "stage_model_uses_mask_channels": true,
+  "crop_model_uses_aux_features": false,
+  "stage_model_uses_aux_features": false,
+  "crop_model_type": "query_cnn_transformer",
+  "stage_model_type": "query_cnn_transformer",
+  "crop_model_uses_relative_doy": false,
+  "stage_model_uses_relative_doy": false,
+  "model_uses_mask_channels": true,
+  "model_uses_aux_features": false,
+  "stage_postprocess": "none",
+  "timing_seconds": {
+    "patch_extraction_seconds": 0.6003390419999999,
+    "model_load_seconds": 0.006674042000000213,
+    "npz_and_query_rows_seconds": 0.030418666000000094,
+    "batch_prepare_seconds": 0.0010797910000004407,
+    "model_forward_seconds": 0.03430804199999926,
+    "logits_to_cpu_seconds": 1.6415999999352948e-05,
+    "postprocess_seconds": 0.0006956660000003723,
+    "write_result_seconds": 0.000598916999999588,
+    "total_seconds": 0.6743433749999994,
+    "queries_per_total_second": 31.141404777647615,
+    "queries_per_forward_second": 612.1013842760381
+  },
+  "result_stats": {
+    "query_rows": 21,
+    "unique_output_keys": 21,
+    "duplicate_output_key_rows": 0,
+    "duplicate_output_key_conflicts": 0,
+    "duplicate_output_key_examples": [],
+    "crop_prediction_counts": {
+      "corn": 0,
+      "rice": 0,
+      "soybean": 21
+    },
+    "stage_prediction_counts": {
+      "Greenup": 3,
+      "MidGreenup": 3,
+      "Peak": 3,
+      "Maturity": 3,
+      "MidSenescence": 3,
+      "Senescence": 6,
+      "Dormancy": 0
+    }
+  },
+  "patch_report": {
+    "mode": "test",
+    "points_csv": "/tmp/kybelix_pipeline_smoke/input/test_point.csv",
+    "tiff_dirs": [
+      "/tmp/kybelix_pipeline_smoke/input/region_test"
+    ],
+    "output_npz": "/Users/yusuf/Desktop/finalround/project_organized/artifacts/experiments/data_prep_pipeline/run_20260430_203211/round_02/P1/work/test_patches.npz",
+    "schema_version": "cnn_transformer_patch_timeseries_v2",
+    "fast_inventory": false,
+    "patch_shape": [
+      3,
+      15,
+      12,
+      15,
+      15
+    ],
+    "patch_dtype": "float32",
+    "valid_pixel_mask_shape": [
+      3,
+      15,
+      12,
+      15,
+      15
+    ],
+    "band_mask_shape": [
+      3,
+      15,
+      12
+    ],
+    "time_mask_shape": [
+      3,
+      15
+    ],
+    "bands": [
+      "B01",
+      "B02",
+      "B03",
+      "B04",
+      "B05",
+      "B06",
+      "B07",
+      "B08",
+      "B8A",
+      "B09",
+      "B11",
+      "B12"
+    ],
+    "patch_size": 15,
+    "invalid_fill_value": 0.0,
+    "valid_min_exclusive": 0.0,
+    "valid_max_inclusive": 2.0,
+    "invalid_value_policy": "valid iff finite and 0.0 < value <= 2.0; invalid pixels are filled with 0.0 in patches and preserved in valid_pixel_mask",
+    "pixel_rounding_policy": "nearest pixel using round((lon-xmin)/pixel_size_x), round((ymax-lat)/pixel_size_y)",
+    "border_policy": "edge_replication",
+    "points_input_rows": 21,
+    "unique_points": 3,
+    "samples_kept": 3,
+    "samples_dropped": 0,
+    "allow_nearest_fallback": true,
+    "filename_status_counts": {
+      "valid": 10229,
+      "unsupported_band": 5,
+      "duplicate_canonical": 3
+    },
+    "region_count": 49,
+    "selected_file_rows": 9865,
+    "selected_file_collision_groups": 364,
+    "selected_l2a_rows": 9853,
+    "selected_l1c_rows": 12,
+    "total_time_cells": 45,
+    "max_timesteps": 15,
+    "padded_time_cells": 0,
+    "samples_with_time_padding": 0,
+    "observed_band_cells": 540,
+    "missing_band_cells": 0,
+    "missing_band_cells_by_band": {
+      "B01": 0,
+      "B02": 0,
+      "B03": 0,
+      "B04": 0,
+      "B05": 0,
+      "B06": 0,
+      "B07": 0,
+      "B08": 0,
+      "B8A": 0,
+      "B09": 0,
+      "B11": 0,
+      "B12": 0
+    },
+    "samples_with_missing_bands": 0,
+    "observed_patch_pixels": 121500,
+    "valid_patch_pixels": 113400,
+    "invalid_patch_pixels": 8100,
+    "global_valid_pixel_ratio": 0.9333333333333333,
+    "valid_pixel_ratio_by_band": {
+      "B01": 0.9333333333333333,
+      "B02": 0.9333333333333333,
+      "B03": 0.9333333333333333,
+      "B04": 0.9333333333333333,
+      "B05": 0.9333333333333333,
+      "B06": 0.9333333333333333,
+      "B07": 0.9333333333333333,
+      "B08": 0.9333333333333333,
+      "B8A": 0.9333333333333333,
+      "B09": 0.9333333333333333,
+      "B11": 0.9333333333333333,
+      "B12": 0.9333333333333333
+    },
+    "samples_with_any_invalid_pixel": 3,
+    "requires_edge_replication_count": 0,
+    "edge_replication_band_cells": 0,
+    "center_clamped_band_cells": 0,
+    "samples_with_center_clamping": 0,
+    "file_read_failures": 0,
+    "patch_extraction_errors": 0,
+    "mapping_status_counts": {
+      "unique_region": 3
+    },
+    "report_sample_groups_requested": {
+      "random": 4,
+      "invalid": 4
+    },
+    "report_sample_groups_seen": {
+      "random": 0,
+      "invalid": 0
+    },
+    "report_sample_groups_kept": {
+      "random": 0,
+      "invalid": 0
+    },
+    "report_sample_bands": [
+      "B04",
+      "B08",
+      "B11"
+    ],
+    "report_random_seed": 42,
+    "timing_seconds": {
+      "load_points_seconds": 0.0021319580000005445,
+      "audit_tiff_files_seconds": 0.3341484999999995,
+      "select_file_index_seconds": 0.04510720799999923,
+      "build_region_catalog_seconds": 0.03140129099999989,
+      "map_points_to_regions_seconds": 0.0023665830000005883,
+      "prepare_metadata_seconds": 0.0001416660000002068,
+      "build_lookup_and_allocate_seconds": 0.025302166999999542,
+      "extract_raster_patches_seconds": 0.1475022500000005,
+      "summarize_metadata_seconds": 0.0008694580000003782,
+      "write_npz_seconds": 0.0075144170000003285,
+      "build_report_seconds": 0.001084458999999427,
+      "total_build_patch_dataset_seconds": 0.5981062919999998
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "dataset_npz": "../project/artifacts/patches_clean/train_cnn_transformer_15x15.npz",
+  "split_csv": "../project/artifacts/splits/train_val_split.csv",
+  "normalization_json": "artifacts/normalization/train_patch_band_stats.json",
+  "checkpoint": "checkpoints/c03_full_data_model.pt",
+  "output_json": "artifacts/evaluations/c03_baseline_eval.json",
+  "batch_size": 512,
+  "num_workers": 0,
+  "device": "auto",
+  "amp": false,
+  "stage_loss_weight": 0.6,
+  "rice_stage_loss_only": true,
+  "include_valid_mask_as_channels": true,
+  "stage_postprocess": "none",
+  "splits": ["train", "val"],
+  "query_shift_days": [0, -3, 3, -7, 7]
+}

@@ -1,0 +1,30 @@
+{
+  "experiment": "full_data_c03_epoch75",
+  "training_mode": "full_data_fixed_epoch",
+  "epoch": 75,
+  "selection_rule": "Epoch fixed before training from prior validation evidence: C00 and C03 both selected epoch 75.",
+  "train_queries": 5446,
+  "final_train_competition_score": 0.9990657843518879,
+  "final_train_loss": 0.057580443139499574,
+  "model_config": {
+    "in_channels": 24,
+    "patch_size": 15,
+    "cnn_embedding_dim": 256,
+    "transformer_dim": 256,
+    "transformer_layers": 4,
+    "attention_heads": 8,
+    "dropout": 0.18,
+    "num_crop_classes": 3,
+    "num_phenophase_classes": 7,
+    "use_query_doy": true,
+    "use_time_doy": true,
+    "aux_feature_dim": 0,
+    "aux_hidden_dim": 128
+  },
+  "git": {
+    "commit": "493b941",
+    "branch": "fullDataTraining",
+    "dirty": true,
+    "status_short": "M configs/train_full_data_c03_epoch75.json"
+  }
+}

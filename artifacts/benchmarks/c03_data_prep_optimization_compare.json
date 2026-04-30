@@ -1,0 +1,81 @@
+{
+  "outputs_identical": true,
+  "baseline_rows": 21,
+  "optimized_rows": 21,
+  "baseline_timing": {
+    "patch_extraction_seconds": 0.6391905,
+    "model_load_seconds": 0.008877167000000075,
+    "npz_and_query_rows_seconds": 0.031077791999999826,
+    "batch_prepare_seconds": 0.0017054169999999313,
+    "model_forward_seconds": 0.037437708999999986,
+    "logits_to_cpu_seconds": 1.8207000000103335e-05,
+    "postprocess_seconds": 0.0006800419999999363,
+    "write_result_seconds": 0.004157250000000001,
+    "total_seconds": 0.723296708,
+    "queries_per_total_second": 29.033728161251357,
+    "queries_per_forward_second": 560.9317600070028
+  },
+  "optimized_timing": {
+    "patch_extraction_seconds": 0.5723927080000002,
+    "model_load_seconds": 0.009752957999999978,
+    "npz_and_query_rows_seconds": 0.030401541000000032,
+    "batch_prepare_seconds": 0.0012389580000000677,
+    "model_forward_seconds": 0.03930408399999985,
+    "logits_to_cpu_seconds": 1.7333999999813443e-05,
+    "postprocess_seconds": 0.000676083000000105,
+    "write_result_seconds": 0.0007796250000000615,
+    "total_seconds": 0.654728083,
+    "queries_per_total_second": 32.074384076786274,
+    "queries_per_forward_second": 534.29562179849
+  },
+  "baseline_patch_timing": {
+    "load_points_seconds": 0.0028753749999999023,
+    "audit_tiff_files_seconds": 0.357042167,
+    "select_file_index_seconds": 0.02502062500000002,
+    "build_region_catalog_seconds": 0.03423862499999997,
+    "map_points_to_regions_seconds": 0.0025405829999998186,
+    "prepare_metadata_seconds": 0.0001370830000000378,
+    "build_lookup_and_allocate_seconds": 0.04291962500000013,
+    "extract_raster_patches_seconds": 0.16177991700000005,
+    "summarize_metadata_seconds": 0.0009647500000000697,
+    "write_npz_seconds": 0.007688333000000158,
+    "build_report_seconds": 0.001240708999999951,
+    "total_build_patch_dataset_seconds": 0.6370533329999999
+  },
+  "optimized_patch_timing": {
+    "load_points_seconds": 0.002311249999999987,
+    "audit_tiff_files_seconds": 0.3444696250000001,
+    "select_file_index_seconds": 0.0,
+    "build_region_catalog_seconds": 0.02725637500000011,
+    "map_points_to_regions_seconds": 0.0024802500000000727,
+    "prepare_metadata_seconds": 0.00013258300000007495,
+    "build_lookup_and_allocate_seconds": 0.025501625000000194,
+    "extract_raster_patches_seconds": 0.1651841249999999,
+    "summarize_metadata_seconds": 0.0009092079999999392,
+    "write_npz_seconds": 0.0,
+    "build_report_seconds": 0.001252165999999999,
+    "total_build_patch_dataset_seconds": 0.5701042919999999
+  },
+  "baseline_patch_core": {
+    "samples_kept": 3,
+    "samples_dropped": 0,
+    "missing_band_cells": 0,
+    "file_read_failures": 0,
+    "patch_extraction_errors": 0,
+    "global_valid_pixel_ratio": 0.9333333333333333,
+    "mapping_status_counts": {
+      "unique_region": 3
+    }
+  },
+  "optimized_patch_core": {
+    "samples_kept": 3,
+    "samples_dropped": 0,
+    "missing_band_cells": 0,
+    "file_read_failures": 0,
+    "patch_extraction_errors": 0,
+    "global_valid_pixel_ratio": 0.9333333333333333,
+    "mapping_status_counts": {
+      "unique_region": 3
+    }
+  }
+}

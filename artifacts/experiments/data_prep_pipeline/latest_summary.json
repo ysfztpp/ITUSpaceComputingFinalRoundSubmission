@@ -1,0 +1,428 @@
+{
+  "run_root": "/Users/yusuf/Desktop/finalround/project_organized/artifacts/experiments/data_prep_pipeline/run_20260430_205725",
+  "input_root": "/tmp/kybelix_pipeline_smoke/input",
+  "device": "cpu",
+  "batch_size": 16,
+  "rounds": 2,
+  "test_dataset": {
+    "description": "platform-shaped local smoke input built from a few known training points",
+    "expected_query_rows": 21,
+    "expected_unique_points": 3
+  },
+  "version_notes": {
+    "P0": "Frozen submitted C03 reference config/checkpoint. When run in this codebase it also benefits from safe global code fixes.",
+    "P1": "Working C03 checkpoint plus the fast selected-file index implementation.",
+    "P2": "P1 plus GDAL open/cache settings and in-memory patch arrays.",
+    "P3": "P2 plus inference-only fast TIFF inventory that directly builds the selected-file index.",
+    "P4": "P3 plus bounded batched raster-window reads for points sharing the same selected raster file.",
+    "P5": "P4 plus adaptive block-aware reads keyed to GeoTIFF internal block layout, with P4/P3 fallback."
+  },
+  "outputs_match_P0": {
+    "P0": true,
+    "P1": true,
+    "P2": true,
+    "P3": true,
+    "P4": true,
+    "P5": true
+  },
+  "patch_core_checks": {
+    "P0": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": false,
+        "block_raster_reads": false,
+        "raster_read_calls": 540,
+        "raster_batch_read_calls": 0,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 121500
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": false,
+        "block_raster_reads": false,
+        "raster_read_calls": 540,
+        "raster_batch_read_calls": 0,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 121500
+      }
+    ],
+    "P1": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": false,
+        "block_raster_reads": false,
+        "raster_read_calls": 540,
+        "raster_batch_read_calls": 0,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 121500
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": false,
+        "block_raster_reads": false,
+        "raster_read_calls": 540,
+        "raster_batch_read_calls": 0,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 121500
+      }
+    ],
+    "P2": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": false,
+        "block_raster_reads": false,
+        "raster_read_calls": 540,
+        "raster_batch_read_calls": 0,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 121500
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": false,
+        "block_raster_reads": false,
+        "raster_read_calls": 540,
+        "raster_batch_read_calls": 0,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 121500
+      }
+    ],
+    "P3": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": false,
+        "block_raster_reads": false,
+        "raster_read_calls": 540,
+        "raster_batch_read_calls": 0,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 121500
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": false,
+        "block_raster_reads": false,
+        "raster_read_calls": 540,
+        "raster_batch_read_calls": 0,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 121500
+      }
+    ],
+    "P4": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": true,
+        "block_raster_reads": false,
+        "raster_read_calls": 180,
+        "raster_batch_read_calls": 180,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 394740
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": true,
+        "block_raster_reads": false,
+        "raster_read_calls": 180,
+        "raster_batch_read_calls": 180,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 394740
+      }
+    ],
+    "P5": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": true,
+        "block_raster_reads": true,
+        "raster_read_calls": 180,
+        "raster_batch_read_calls": 180,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 394740
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        },
+        "batch_raster_reads": true,
+        "block_raster_reads": true,
+        "raster_read_calls": 180,
+        "raster_batch_read_calls": 180,
+        "raster_block_read_calls": 0,
+        "raster_fallback_patch_read_calls": 0,
+        "raster_pixels_read": 394740
+      }
+    ]
+  },
+  "summaries": {
+    "P0": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.7211097709999996,
+        "model_load_seconds": 0.009243020500000032,
+        "npz_and_query_rows_seconds": 0.029897896000000146,
+        "batch_prepare_seconds": 0.0015911044999999957,
+        "model_forward_seconds": 0.04502999999999968,
+        "postprocess_seconds": 0.0008591664999999526,
+        "write_result_seconds": 0.0005557295000001572,
+        "total_seconds": 0.8085131044999999
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.4044684994999997,
+        "select_file_index_seconds": 0.023877958499999963,
+        "build_region_catalog_seconds": 0.04541352100000018,
+        "build_lookup_and_allocate_seconds": 0.03190616699999993,
+        "extract_raster_patches_seconds": 0.19636468750000013,
+        "write_npz_seconds": 0.007226916500000402,
+        "total_build_patch_dataset_seconds": 0.7191728540000002
+      },
+      "patch_count_medians": {
+        "raster_read_calls": 540.0,
+        "raster_batch_read_calls": 0.0,
+        "raster_block_read_calls": 0.0,
+        "raster_fallback_patch_read_calls": 0.0,
+        "raster_pixels_read": 121500.0
+      }
+    },
+    "P1": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.5715190625000004,
+        "model_load_seconds": 0.006785021000000002,
+        "npz_and_query_rows_seconds": 0.029364145499999772,
+        "batch_prepare_seconds": 0.0013436040000001093,
+        "model_forward_seconds": 0.03253866700000052,
+        "postprocess_seconds": 0.0006523959999999995,
+        "write_result_seconds": 0.0005500000000002725,
+        "total_seconds": 0.6429729794999999
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.32037829149999986,
+        "select_file_index_seconds": 0.03277047899999963,
+        "build_region_catalog_seconds": 0.02975452050000027,
+        "build_lookup_and_allocate_seconds": 0.031187541500000027,
+        "extract_raster_patches_seconds": 0.14081322950000041,
+        "write_npz_seconds": 0.0073596880000004194,
+        "total_build_patch_dataset_seconds": 0.5693004165
+      },
+      "patch_count_medians": {
+        "raster_read_calls": 540.0,
+        "raster_batch_read_calls": 0.0,
+        "raster_block_read_calls": 0.0,
+        "raster_fallback_patch_read_calls": 0.0,
+        "raster_pixels_read": 121500.0
+      }
+    },
+    "P2": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.5544659585,
+        "model_load_seconds": 0.01457347950000032,
+        "npz_and_query_rows_seconds": 0.027948395499999945,
+        "batch_prepare_seconds": 0.0011032295000004133,
+        "model_forward_seconds": 0.03253676999999966,
+        "postprocess_seconds": 0.0006493129999998182,
+        "write_result_seconds": 0.0005515835000002856,
+        "total_seconds": 0.6320459165000001
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.33061927099999977,
+        "select_file_index_seconds": 0.031966250500000015,
+        "build_region_catalog_seconds": 0.020475604000000036,
+        "build_lookup_and_allocate_seconds": 0.0317427910000001,
+        "extract_raster_patches_seconds": 0.1303264165,
+        "write_npz_seconds": 0.0,
+        "total_build_patch_dataset_seconds": 0.5521346250000001
+      },
+      "patch_count_medians": {
+        "raster_read_calls": 540.0,
+        "raster_batch_read_calls": 0.0,
+        "raster_block_read_calls": 0.0,
+        "raster_fallback_patch_read_calls": 0.0,
+        "raster_pixels_read": 121500.0
+      }
+    },
+    "P3": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.4727115835,
+        "model_load_seconds": 0.008523895999999809,
+        "npz_and_query_rows_seconds": 0.03535308349999999,
+        "batch_prepare_seconds": 0.0011866455000002496,
+        "model_forward_seconds": 0.032798228499999915,
+        "postprocess_seconds": 0.0006484789999996465,
+        "write_result_seconds": 0.000574770499999655,
+        "total_seconds": 0.5520515619999999
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.3241926455000004,
+        "select_file_index_seconds": 0.0,
+        "build_region_catalog_seconds": 0.013152083000000037,
+        "build_lookup_and_allocate_seconds": 0.022537541500000424,
+        "extract_raster_patches_seconds": 0.10337799950000015,
+        "write_npz_seconds": 0.0,
+        "total_build_patch_dataset_seconds": 0.47073635400000025
+      },
+      "patch_count_medians": {
+        "raster_read_calls": 540.0,
+        "raster_batch_read_calls": 0.0,
+        "raster_block_read_calls": 0.0,
+        "raster_fallback_patch_read_calls": 0.0,
+        "raster_pixels_read": 121500.0
+      }
+    },
+    "P4": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.48255047949999996,
+        "model_load_seconds": 0.006739458499999795,
+        "npz_and_query_rows_seconds": 0.02818524999999994,
+        "batch_prepare_seconds": 0.0010637074999997331,
+        "model_forward_seconds": 0.03319841649999944,
+        "postprocess_seconds": 0.0006951250000000186,
+        "write_result_seconds": 0.0005519790000003688,
+        "total_seconds": 0.5532109580000002
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.32344618699999983,
+        "select_file_index_seconds": 0.0,
+        "build_region_catalog_seconds": 0.013587666500000317,
+        "build_lookup_and_allocate_seconds": 0.022657646000000087,
+        "extract_raster_patches_seconds": 0.11349997899999997,
+        "write_npz_seconds": 0.0,
+        "total_build_patch_dataset_seconds": 0.48030225000000004
+      },
+      "patch_count_medians": {
+        "raster_read_calls": 180.0,
+        "raster_batch_read_calls": 180.0,
+        "raster_block_read_calls": 0.0,
+        "raster_fallback_patch_read_calls": 0.0,
+        "raster_pixels_read": 394740.0
+      }
+    },
+    "P5": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.4801232495000005,
+        "model_load_seconds": 0.0066346875000005134,
+        "npz_and_query_rows_seconds": 0.02802087449999968,
+        "batch_prepare_seconds": 0.0010791249999999586,
+        "model_forward_seconds": 0.032096667000000245,
+        "postprocess_seconds": 0.0006395209999996432,
+        "write_result_seconds": 0.0005607084999996736,
+        "total_seconds": 0.5493819794999997
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.3130145624999998,
+        "select_file_index_seconds": 0.0,
+        "build_region_catalog_seconds": 0.01337429199999951,
+        "build_lookup_and_allocate_seconds": 0.0400164795000002,
+        "extract_raster_patches_seconds": 0.10463929150000029,
+        "write_npz_seconds": 0.0,
+        "total_build_patch_dataset_seconds": 0.47811027049999977
+      },
+      "patch_count_medians": {
+        "raster_read_calls": 180.0,
+        "raster_batch_read_calls": 180.0,
+        "raster_block_read_calls": 0.0,
+        "raster_fallback_patch_read_calls": 0.0,
+        "raster_pixels_read": 394740.0
+      }
+    }
+  }
+}

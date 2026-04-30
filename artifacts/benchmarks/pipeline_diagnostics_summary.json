@@ -1,0 +1,111 @@
+{
+  "generated_at_unix": 1777573891.5023181,
+  "root": "/Users/yusuf/Desktop/finalround/project_organized",
+  "scope": [
+    "c03",
+    "tsvit"
+  ],
+  "sanity": {
+    "command": [
+      "/Users/yusuf/Desktop/finalround/project_organized/.venv/bin/python",
+      "scripts/run_sanity_checks.py"
+    ],
+    "returncode": 0,
+    "seconds": 1.730757125,
+    "output_tail": "{\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"check\": \"pdf_requirements\",\n      \"status\": \"ok\",\n      \"detail\": {\n        \"Round2 Project Submission Manual_en_0407.pdf\": {\n          \"exists\": true,\n          \"pages\": 17,\n          \"missing_keywords\": []\n        },\n        \"Space Intelligence Empowering Zero Hunger Track_Task Description of Final Round_en.pdf\": {\n          \"exists\": true,\n          \"pages\": 8,\n          \"missing_keywords\": []\n        }\n      }\n    },\n    {\n      \"check\": \"scoring_formula\",\n      \"status\": \"ok\",\n      \"detail\": {\n        \"formula\": \"0.4 * crop_macro_f1 + 0.6 * rice_only_stage_macro_f1\",\n        \"perfect_case\": {\n          \"crop_macro_f1\": 1.0,\n          \"rice_stage_macro_f1\": 1.0,\n          \"competition_score\": 1.0\n        },\n        \"rice_double_hit_error_case\": {\n          \"crop_macro_f1\": 0.8632478632478632,\n          \"rice_stage_macro_f1\": 0.8571428571428571,\n          \"competition_score\": 0.8595848595848595\n        }\n      }\n    },\n    {\n      \"check\": \"candidate_scope\",\n      \"status\": \"ok\",\n      \"detail\": {\n        \"configs_extra\": [],\n        \"configs_missing\": [],\n        \"model_files_extra\": [],\n        \"model_files_missing\": [],\n        \"checkpoints_extra\": [],\n        \"checkpoints_missing\": [],\n        \"note\": \"temporal_transformer.py is retained because both C03 and TSViT import its time-encoding helpers.\"\n      }\n    },\n    {\n      \"check\": \"config_consistency\",\n      \"status\": \"ok\",\n      \"detail\": {\n        \"c03_epoch_matches_card\": true,\n        \"tsvit_epoch_matches_card\": true,\n        \"c03_submission_checkpoint_exists\": true,\n        \"tsvit_submission_checkpoint_exists\": true,\n        \"c03_submission_output_contract\": true,\n        \"tsvit_submission_output_contract\": true,\n        \"tsvit_model_type\": true\n      }\n    },\n    {\n      \"check\": \"metrics_inventory\",\n      \"status\": \"ok\",\n      \"detail\": {\n        \"c03_full_data\": {\n          \"epoch\": 75,\n          \"train_queries\": 5446,\n          \"final_train_competition_score\": 0.9990657843518879,\n          \"final_train_loss\": 0.057580443139499574\n        },\n        \"c03_validation_source\": \"/Users/yusuf/Desktop/finalround/models/C03/checkpoint/metrics_summary.json\",\n        \"c03_validation\": {\n          \"best_epoch\": 75,\n          \"best_val_competition_score\": 1.0,\n          \"best_val_crop_macro_f1\": 1.0,\n          \"best_val_rice_stage_macro_f1\": 1.0,\n          \"best_val_loss\": 0.0610867170741469\n        },\n        \"tsvit_full_data\": {\n          \"epoch\": 42,\n          \"train_queries\": 5446,\n          \"final_train_competition_score\": 1.0,\n          \"final_train_loss\": 0.16692913118701974\n        },\n        \"tsvit_validation\": \"not present in the local archive; current TSViT evidence is full-data train metrics plus checkpoint metadata\"\n      }\n    },\n    {\n      \"check\": \"checkpoint_validation\",\n      \"status\": \"ok\",\n      \"detail\": {\n        \"c03\": {\n          \"returncode\": 0,\n          \"checkpoint_mb\": 12.55,\n          \"checkpoint_epoch\": 75,\n          \"checkpoint_metric\": \"fixed_epoch_full_data\",\n          \"model_type\": \"query_cnn_transformer\",\n          \"in_channels\": 24,\n          \"patch_size\": 15,\n          \"num_crop_classes\": 3,\n          \"num_phenophase_classes\": 7,\n          \"aux_feature_dim\": 0,\n          \"output_json\": \"/output/result.json\"\n        },\n        \"tsvit\": {\n          \"returncode\": 0,\n          \"checkpoint_mb\": 88.51,\n          \"checkpoint_epoch\": 42,\n          \"checkpoint_metric\": \"fixed_epoch_full_data\",\n          \"model_type\": \"query_tsvit\",\n          \"in_channels\": 24,\n          \"patch_size\": 15,\n          \"num_crop_classes\": 3,\n          \"num_phenophase_classes\": 7,\n          \"aux_feature_dim\": 135,\n          \"output_json\": \"/output/result.json\"\n        }\n      }\n    }\n  ]\n}\n"
+  },
+  "compileall": {
+    "command": [
+      "/Users/yusuf/Desktop/finalround/project_organized/.venv/bin/python",
+      "-m",
+      "compileall",
+      "data",
+      "models",
+      "preprocessing",
+      "scripts",
+      "training",
+      "inference.py"
+    ],
+    "returncode": 0,
+    "seconds": 0.0363811249999999,
+    "output_tail": "Listing 'data'...\nListing 'models'...\nListing 'preprocessing'...\nListing 'scripts'...\nListing 'training'...\n"
+  },
+  "benchmark": {
+    "command": [
+      "/Users/yusuf/Desktop/finalround/project_organized/.venv/bin/python",
+      "scripts/benchmark_models.py",
+      "--candidate",
+      "all",
+      "--iterations",
+      "5",
+      "--warmup",
+      "2"
+    ],
+    "returncode": 0,
+    "seconds": 8.686005625,
+    "output_tail": "/Users/yusuf/Desktop/finalround/project_organized/.venv/lib/python3.9/site-packages/torch/nn/modules/transformer.py:515: UserWarning: The PyTorch API of nested tensors is in prototype stage and will change in the near future. We recommend specifying layout=torch.jagged when constructing a nested tensor, as this layout receives active development, has better operator coverage, and works with torch.compile. (Triggered internally at /Users/runner/work/pytorch/pytorch/pytorch/aten/src/ATen/NestedTensorImpl.cpp:182.)\n  output = torch._nested_tensor_from_mask(\n{\n  \"generated_at_unix\": 1777573901.8238778,\n  \"reports\": [\n    {\n      \"candidate\": \"c03\",\n      \"model_type\": \"query_cnn_transformer\",\n      \"device\": \"cpu\",\n      \"torch_version\": \"2.8.0\",\n      \"checkpoint\": \"/Users/yusuf/Desktop/finalround/project_organized/checkpoints/c03_full_data_model.pt\",\n      \"checkpoint_mb\": 12.55,\n      \"checkpoint_epoch\": 75,\n      \"checkpoint_metric\": \"fixed_epoch_full_data\",\n      \"parameter_count\": 3275146,\n      \"model_config\": {\n        \"in_channels\": 24,\n        \"patch_size\": 15,\n        \"num_crop_classes\": 3,\n        \"num_phenophase_classes\": 7,\n        \"aux_feature_dim\": 0\n      },\n      \"load_seconds\": 0.00920570899999995,\n      \"synthetic_forward\": {\n        \"batch_size\": 64,\n        \"time_steps\": 29,\n        \"warmup\": 2,\n        \"iterations\": 5,\n        \"median_forward_ms\": 188.39716699999997,\n        \"mean_forward_ms\": 190.53498380000005,\n        \"median_rows_per_second\": 339.70786832479286,\n        \"mean_rows_per_second\": 335.8963205790032\n      }\n    },\n    {\n      \"candidate\": \"tsvit\",\n      \"model_type\": \"query_tsvit\",\n      \"device\": \"cpu\",\n      \"torch_version\": \"2.8.0\",\n      \"checkpoint\": \"/Users/yusuf/Desktop/finalround/project_organized/checkpoints/c29_tsvit_model.pt\",\n      \"checkpoint_mb\": 88.51,\n      \"checkpoint_epoch\": 42,\n      \"checkpoint_metric\": \"fixed_epoch_full_data\",\n      \"parameter_count\": 23170666,\n      \"model_config\": {\n        \"in_channels\": 24,\n        \"patch_size\": 15,\n        \"num_crop_classes\": 3,\n        \"num_phenophase_classes\": 7,\n        \"aux_feature_dim\": 135\n      },\n      \"load_seconds\": 0.03541337500000008,\n      \"synthetic_forward\": {\n        \"batch_size\": 32,\n        \"time_steps\": 29,\n        \"warmup\": 2,\n        \"iterations\": 5,\n        \"median_forward_ms\": 808.7419590000006,\n        \"mean_forward_ms\": 810.0151836,\n        \"median_rows_per_second\": 39.56762678613534,\n        \"mean_rows_per_second\": 39.505432302861834\n      }\n    }\n  ]\n}\n"
+  },
+  "smoke_input": {
+    "input_root": "/tmp/kybelix_pipeline_smoke/input",
+    "points_csv": "/tmp/kybelix_pipeline_smoke/input/test_point.csv",
+    "query_rows": 21,
+    "unique_points": 3,
+    "new_symlinks": 0,
+    "existing_symlinks_or_files": 10240,
+    "region_test_entries": 10237
+  },
+  "c03_smoke": {
+    "queries": 21,
+    "unique_output_keys": 21,
+    "duplicate_output_key_rows": 0,
+    "duplicate_output_key_conflicts": 0,
+    "device": "cpu",
+    "timing_seconds": {
+      "patch_extraction_seconds": 0.7511672090000001,
+      "model_load_seconds": 0.009135750000000442,
+      "npz_and_query_rows_seconds": 0.03360487499999998,
+      "batch_prepare_seconds": 0.0018920839999996275,
+      "model_forward_seconds": 0.036705500000001834,
+      "logits_to_cpu_seconds": 1.7582999999987692e-05,
+      "postprocess_seconds": 0.0010498339999998052,
+      "write_result_seconds": 0.0005052499999997906,
+      "total_seconds": 0.8342197080000009,
+      "queries_per_total_second": 25.173224509819395,
+      "queries_per_forward_second": 572.1213442126916
+    },
+    "result_stats": {
+      "query_rows": 21,
+      "unique_output_keys": 21,
+      "duplicate_output_key_rows": 0,
+      "duplicate_output_key_conflicts": 0,
+      "duplicate_output_key_examples": [],
+      "crop_prediction_counts": {
+        "corn": 0,
+        "rice": 0,
+        "soybean": 21
+      },
+      "stage_prediction_counts": {
+        "Greenup": 3,
+        "MidGreenup": 3,
+        "Peak": 3,
+        "Maturity": 3,
+        "MidSenescence": 3,
+        "Senescence": 6,
+        "Dormancy": 0
+      }
+    },
+    "patch_report": {
+      "samples_kept": 3,
+      "samples_dropped": 0,
+      "missing_band_cells": 0,
+      "global_valid_pixel_ratio": 0.9333333333333333,
+      "file_read_failures": 0,
+      "patch_extraction_errors": 0,
+      "mapping_status_counts": {
+        "unique_region": 3
+      }
+    }
+  },
+  "status": "ok",
+  "failed_steps": []
+}

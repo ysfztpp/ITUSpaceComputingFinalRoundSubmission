@@ -1,0 +1,208 @@
+{
+  "run_root": "/Users/yusuf/Desktop/finalround/project_organized/artifacts/experiments/data_prep_pipeline/run_20260430_203211",
+  "input_root": "/tmp/kybelix_pipeline_smoke/input",
+  "device": "cpu",
+  "batch_size": 16,
+  "rounds": 2,
+  "test_dataset": {
+    "description": "platform-shaped local smoke input built from a few known training points",
+    "expected_query_rows": 21,
+    "expected_unique_points": 3
+  },
+  "version_notes": {
+    "P0": "Frozen submitted C03 reference config/checkpoint. When run in this codebase it also benefits from safe global code fixes.",
+    "P1": "Working C03 checkpoint plus the fast selected-file index implementation.",
+    "P2": "P1 plus GDAL open/cache settings and in-memory patch arrays.",
+    "P3": "P2 plus inference-only fast TIFF inventory that directly builds the selected-file index."
+  },
+  "outputs_match_P0": {
+    "P0": true,
+    "P1": true,
+    "P2": true,
+    "P3": true
+  },
+  "patch_core_checks": {
+    "P0": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        }
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        }
+      }
+    ],
+    "P1": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        }
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        }
+      }
+    ],
+    "P2": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        }
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        }
+      }
+    ],
+    "P3": [
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        }
+      },
+      {
+        "samples_kept": 3,
+        "samples_dropped": 0,
+        "missing_band_cells": 0,
+        "file_read_failures": 0,
+        "patch_extraction_errors": 0,
+        "global_valid_pixel_ratio": 0.9333333333333333,
+        "mapping_status_counts": {
+          "unique_region": 3
+        }
+      }
+    ]
+  },
+  "summaries": {
+    "P0": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.6318225624999998,
+        "model_load_seconds": 0.009699416500000169,
+        "npz_and_query_rows_seconds": 0.03214260450000006,
+        "batch_prepare_seconds": 0.0014238125000001212,
+        "model_forward_seconds": 0.0371453334999996,
+        "postprocess_seconds": 0.0006754164999999146,
+        "write_result_seconds": 0.0006244374999996305,
+        "total_seconds": 0.7137979375000003
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.35754285400000024,
+        "select_file_index_seconds": 0.025220062999999848,
+        "build_region_catalog_seconds": 0.033257709000000135,
+        "build_lookup_and_allocate_seconds": 0.034144729499999915,
+        "extract_raster_patches_seconds": 0.1638003960000004,
+        "write_npz_seconds": 0.007773936999999842,
+        "total_build_patch_dataset_seconds": 0.6296877084999998
+      }
+    },
+    "P1": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.596884771,
+        "model_load_seconds": 0.006711646000000071,
+        "npz_and_query_rows_seconds": 0.030578749999999988,
+        "batch_prepare_seconds": 0.0011064365000003074,
+        "model_forward_seconds": 0.0342152499999997,
+        "postprocess_seconds": 0.0006767080000003034,
+        "write_result_seconds": 0.0005937289999997653,
+        "total_seconds": 0.6710053544999997
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.3341879579999998,
+        "select_file_index_seconds": 0.03499933299999958,
+        "build_region_catalog_seconds": 0.03098947899999993,
+        "build_lookup_and_allocate_seconds": 0.03372527099999978,
+        "extract_raster_patches_seconds": 0.14609150000000015,
+        "write_npz_seconds": 0.007479854500000216,
+        "total_build_patch_dataset_seconds": 0.5946430835
+      }
+    },
+    "P2": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.5460863329999999,
+        "model_load_seconds": 0.015158354000000207,
+        "npz_and_query_rows_seconds": 0.029034833000000093,
+        "batch_prepare_seconds": 0.0011306459999995688,
+        "model_forward_seconds": 0.03495362499999999,
+        "postprocess_seconds": 0.0006533539999999949,
+        "write_result_seconds": 0.0005768750000001432,
+        "total_seconds": 0.6278401250000001
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.3429229790000001,
+        "select_file_index_seconds": 0.03404252100000016,
+        "build_region_catalog_seconds": 0.014527499999999804,
+        "build_lookup_and_allocate_seconds": 0.03511783349999997,
+        "extract_raster_patches_seconds": 0.11009806299999991,
+        "write_npz_seconds": 0.0,
+        "total_build_patch_dataset_seconds": 0.5438957499999999
+      }
+    },
+    "P3": {
+      "timing_median_seconds": {
+        "patch_extraction_seconds": 0.48965229199999993,
+        "model_load_seconds": 0.006795645999999822,
+        "npz_and_query_rows_seconds": 0.028905103999999904,
+        "batch_prepare_seconds": 0.0011065419999998216,
+        "model_forward_seconds": 0.03305045849999999,
+        "postprocess_seconds": 0.0006438539999997772,
+        "write_result_seconds": 0.000564853999999837,
+        "total_seconds": 0.5609790414999998
+      },
+      "patch_timing_median_seconds": {
+        "audit_tiff_files_seconds": 0.3373665829999999,
+        "select_file_index_seconds": 0.0,
+        "build_region_catalog_seconds": 0.014449312500000033,
+        "build_lookup_and_allocate_seconds": 0.023488916500000068,
+        "extract_raster_patches_seconds": 0.10505004200000001,
+        "write_npz_seconds": 0.0,
+        "total_build_patch_dataset_seconds": 0.4877644164999999
+      }
+    }
+  }
+}

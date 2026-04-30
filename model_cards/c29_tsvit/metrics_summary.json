@@ -1,0 +1,38 @@
+{
+  "experiment": "full_data_c29_tsvit_relative_aux_crop_submission",
+  "training_mode": "full_data_fixed_epoch",
+  "epoch": 42,
+  "selection_rule": "Full-data C29 TSViT run after crop-focused validation tuning. Override --epochs to the selected best epoch from the validation run before training on all labeled data.",
+  "train_queries": 5446,
+  "final_train_competition_score": 1.0,
+  "final_train_loss": 0.16692913118701974,
+  "model_config": {
+    "in_channels": 24,
+    "patch_size": 15,
+    "token_patch_size": 3,
+    "transformer_dim": 320,
+    "temporal_layers": 6,
+    "spatial_layers": 6,
+    "attention_heads": 8,
+    "mlp_ratio": 4.0,
+    "dropout": 0.18,
+    "num_crop_classes": 3,
+    "num_phenophase_classes": 7,
+    "use_query_doy": true,
+    "use_time_doy": true,
+    "time_encoding_type": "fourier",
+    "query_encoding_type": "fourier",
+    "time_encoding_harmonics": 8,
+    "aux_feature_dim": 135,
+    "aux_hidden_dim": 96,
+    "aux_target": "crop_only",
+    "use_relative_query_bias": true,
+    "use_direct_query_logit_bias": true
+  },
+  "git": {
+    "commit": "3598f1d",
+    "branch": "modelDev2",
+    "dirty": false,
+    "status_short": ""
+  }
+}
