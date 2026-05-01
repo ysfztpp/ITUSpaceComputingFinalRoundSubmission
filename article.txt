@@ -1,0 +1,1397 @@
+Title: A Query-Aware Sentinel-2 Time-Series Model for Crop Type and Rice Phenology Prediction
+
+Draft status: pre-submission article base
+Primary submission described here: C03 full-data model with the P6 fast inference pipeline
+Timing and delay metrics: platform metrics are included for C03, C20, P3, and final C03 + P6
+
+
+1. Executive Summary
+
+This project solves Track 1 of the 2026 Artificial Intelligence and Space Computing Challenge, "Space Intelligence Empowering Zero Hunger." The task is to predict, for hidden test points, both the crop category and the phenological stage associated with a requested date. The input is a platform-mounted inference dataset containing a point CSV and multi-temporal Sentinel-2 TIFF imagery. The output must be a single JSON file at /output/result.json.
+
+The final submission uses a compact query-aware CNN + Transformer model, identified internally as C03 full-data epoch 75. The model takes a multi-date Sentinel-2 patch time series around each point, adds acquisition day-of-year information, adds the requested query day-of-year, and predicts:
+
+- crop type: corn, rice, or soybean
+- phenophase stage: Greenup, MidGreenup, Peak, Maturity, MidSenescence, Senescence, or Dormancy
+
+The final runtime package uses the P6 preprocessing and inference pipeline. P6 is not a different model; it is the faster execution path around the C03 model. It keeps the same model weights and prediction behavior, but improves inference-side data preparation through fast TIFF inventory, GDAL configuration, in-memory patch tensors, no NPZ write during inference, multi-worker raster extraction, and bounded batched raster window reads.
+
+The final package intentionally does not use XGBoost, TSViT, model ensembles, hard stage bijection, or transition/Viterbi postprocessing. Those were investigated as comparison or high-upside alternatives, but the final operational choice is the simpler C03 neural model because it is small, validated, easier to explain, and safer for a constrained inference-only space runtime.
+
+
+2. Competition Objective and Output Contract
+
+The official task asks participants to use multi-temporal Sentinel-2A/Sentinel-2B multispectral surface reflectance imagery during the rice growing season to predict hidden point labels. The final-round test data is not public and is mounted by the platform under /input.
+
+The expected Track 1 input structure is:
+
+/input/test_point.csv or /input/points_test.csv
+/input/region_test/*.tiff
+
+The required output is:
+
+/output/result.json
+
+The JSON key must be formed from longitude, latitude, and query date:
+
+{Longitude}_{Latitude}_{Date}
+
+The JSON value must be a two-element list:
+
+[CropType, PhenophaseStage]
+
+An example output row is:
+
+"124.703696_48.543523_2018/9/1": ["corn", "Senescence"]
+
+The scoring rule combines two macro-F1 terms:
+
+competition_score = 0.4 * crop_macro_f1 + 0.6 * rice_phenology_macro_f1
+
+The crop score is a macro-average F1 over the three target crop classes. The rice phenology score is stricter: it evaluates rice-stage predictions only through a "double hit" condition. A prediction is counted as correct for a rice phenology stage only when both the crop label is rice and the phenological stage label is correct. This makes the model's rice crop recognition and rice stage prediction tightly coupled. A crop mistake can damage the rice phenology score even if the predicted stage label looks plausible.
+
+This scoring rule strongly influenced the model design. The pipeline must be reliable at recognizing crop type, but it must also answer the date-specific phenology question for rice. A model that knows only the spatial crop pattern but ignores the requested date is insufficient.
+
+
+3. Data Representation
+
+3.1 Sentinel-2 Bands
+
+The model uses the standard 12-band Sentinel-2 order used throughout the project:
+
+B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09, B11, B12
+
+Each band is stored as a separate TIFF file for a region and acquisition date. The preprocessing code parses filenames to identify region, acquisition date, processing level, and band. Files that do not match the expected Sentinel-2 naming pattern are rejected. Unsupported bands are ignored.
+
+When duplicate candidates exist for the same region, date, and band, the file selection is deterministic:
+
+- prefer valid supported Sentinel-2 bands
+- prefer L2A over L1C when multiple processing levels exist
+- use path order as a deterministic tie breaker
+
+This deterministic file selection is important for reproducibility: the same mounted input directory should always generate the same patch tensor.
+
+3.2 Point Rows and Query Rows
+
+The training labels contain:
+
+- point_id
+- Longitude
+- Latitude
+- phenophase_date
+- crop_type
+- phenophase_name
+
+A point represents a fixed spatial location, but it can have multiple phenophase dates. The model treats each point-date pair as a separate query. The same image time series can therefore be used multiple times with different query dates. This is the central modeling idea: crop type is mostly spatial and seasonal, while phenophase stage is date-dependent.
+
+The inference code accepts column-name variants such as Longitude, Longtitude, longitude, lon, Latitude, lat, phenophase_date, Date, date, query_date, datetime, time, point_id, pointid, and id. This protects the submission from minor platform-side naming variation.
+
+3.3 Region Mapping
+
+The preprocessing stage builds a region catalog from selected TIFFs. For each point, the code checks which raster region bounding boxes contain the point. If exactly one region contains the point, that region is used. If multiple regions contain the point, the code chooses the best region by:
+
+1. highest number of time steps
+2. highest band count
+3. largest border margin
+4. region ID as deterministic tie breaker
+
+In training mode, points outside all regions are dropped. In inference mode, nearest-region fallback is allowed so the platform can still produce predictions for all test points.
+
+3.4 Patch Extraction
+
+For every selected point, acquisition date, and band, the preprocessing code extracts a 15 x 15 pixel patch centered on the point. The patch size is odd, so there is one center pixel and seven pixels of context in each direction.
+
+The longitude/latitude to pixel conversion is:
+
+pixel_x = round((lon - xmin) / pixel_size_x)
+pixel_y = round((ymax - lat) / pixel_size_y)
+
+If the patch would extend outside the TIFF boundary, the point is not discarded. The valid part of the raster window is read, and missing rows or columns are filled by edge replication. Edge replication repeats the nearest real edge values instead of inserting zeros. This keeps border points usable while avoiding artificial zero borders.
+
+The preprocessing report records whether a patch needed edge replication and whether the center had to be clamped into the raster.
+
+3.5 Invalid Pixel Handling
+
+A pixel is considered valid only when:
+
+finite and 0.0 < value <= 2.0
+
+Invalid pixels are handled in two ways:
+
+1. the patch value is filled with 0.0
+2. a valid_pixel_mask records which pixels were valid
+
+This distinction matters because the model uses valid-mask channels. A zero value alone would be ambiguous, but a separate mask channel tells the model whether a pixel is an actual valid measurement or a filled invalid value.
+
+3.6 Tensor Shape
+
+The cleaned training tensor has the schema:
+
+patches: [N, T, 12, 15, 15]
+valid_pixel_mask: [N, T, 12, 15, 15]
+time_mask: [N, T]
+time_doy: [N, T]
+band_mask: [N, T, 12]
+
+For the cleaned training artifact, N is 778 unique points and the maximum T is 29 acquisition dates. Different regions have different date counts, so shorter sequences are padded. The time_mask identifies real acquisition dates and prevents padded dates from affecting the Transformer.
+
+For the final C03 model, the model input channel count is 24:
+
+- 12 normalized Sentinel-2 bands
+- 12 binary valid-mask channels
+
+3.7 Normalization
+
+The active normalization is z-score normalization computed only from valid pixels in the training data:
+
+normalized = (raw_value - training_band_mean) / training_band_std
+
+After normalization, invalid pixels are reset to 0.0. The normalization statistics are stored in:
+
+artifacts/normalization/train_patch_band_stats.json
+
+The submission package includes this JSON and validates that it contains 12 bands and per-band mean/std values before inference.
+
+
+4. Training Query Construction
+
+The NPZ stores one image time-series tensor per unique point. The PyTorch dataset expands that point tensor into query rows. For each point:
+
+1. read the crop label
+2. read the seven phenophase day-of-year labels
+3. create one query for each known phenophase date
+4. attach the full point time series to every query
+5. attach the requested query_doy
+6. set the crop target to the point crop
+7. set the stage target to the queried phenophase stage
+
+The final full-data C03 model was trained on all labeled query rows after the validation evidence had selected epoch 75. The full-data training run used 5,446 query rows.
+
+
+5. Final Model: C03 Query CNN Transformer
+
+5.1 Model Identity
+
+Final candidate name: C03 full-data epoch 75
+Model type: query_cnn_transformer
+Checkpoint: checkpoints/c03_full_data_model.pt
+Checkpoint size: 12.55 MB
+Parameter count: 3,275,146
+Fixed full-data epoch: 75
+Input channels: 24
+Patch size: 15
+Crop classes: 3
+Phenophase classes: 7
+Auxiliary features: not used
+Query day encoding: enabled
+Acquisition day encoding: enabled
+Valid-mask channels: enabled
+
+5.2 Why C03 Was Selected
+
+C03 reproduced the earlier C00-style baseline with the current code. In validation-side evidence, the C03 checkpoint reached:
+
+- best validation competition score: 1.000000
+- best validation crop macro-F1: 1.000000
+- best validation rice-stage macro-F1: 1.000000
+- best validation loss: 0.061087
+- best epoch: 75
+
+The full-data model was then trained for the fixed epoch selected from prior validation evidence. Full-data training uses all labeled samples and has no validation split. Its recorded final training evidence is:
+
+- train queries: 5,446
+- final train competition score: 0.999066
+- final train loss: 0.057580
+
+The final C03 model was selected because it is compact, stable, easy to validate, already aligned with the platform output contract, and safer than heavier alternatives for an inference-only deployment environment.
+
+5.3 Per-Date CNN Encoder
+
+Each acquisition date is encoded separately by the same small CNN. The CNN receives one date's patch tensor with 24 channels and spatial size 15 x 15. Its structure is:
+
+1. Conv2D from input channels to 32 channels
+2. BatchNorm
+3. GELU
+4. Conv2D from 32 to 64 channels
+5. BatchNorm
+6. GELU
+7. MaxPool2D
+8. Conv2D from 64 to 96 channels
+9. BatchNorm
+10. GELU
+11. Adaptive average pooling to one spatial cell
+12. Flatten
+13. Dropout
+14. Linear projection to 256 dimensions
+15. LayerNorm
+
+The output is one 256-dimensional embedding per acquisition date.
+
+5.4 Acquisition Day Encoding
+
+The model uses acquisition day-of-year information through a sinusoidal day encoding. The day-of-year is converted into sine and cosine seasonal features and projected into the Transformer dimension. This encoding is added to the per-date CNN embedding, giving the Transformer information about when each satellite observation occurred.
+
+This is important because two visually similar patches can mean different things depending on whether they occur early, mid, or late in the growing season.
+
+5.5 Temporal Transformer
+
+The date embeddings are processed by a Transformer encoder:
+
+- Transformer dimension: 256
+- Transformer layers: 4
+- Attention heads: 8
+- Feed-forward dimension: 1024
+- Activation: GELU
+- Dropout: 0.18
+
+The Transformer receives a key padding mask derived from time_mask, so padded dates do not influence attention.
+
+5.6 Masked Temporal Pooling
+
+After the Transformer, the model uses masked temporal average pooling. Only real acquisition dates are pooled. Padded dates are ignored. The result is one seasonal representation vector for the point.
+
+5.7 Query Day Encoding
+
+The query day-of-year is encoded separately using the same seasonal logic. This creates a 256-dimensional query vector. The model concatenates:
+
+- pooled seasonal image representation
+- query date representation
+
+This is the core reason the model can answer different phenophase questions for the same spatial point. If the query date changes, the input image time series can stay the same while the predicted stage changes.
+
+5.8 Output Heads
+
+C03 has two output heads:
+
+- crop head: LayerNorm, Dropout, Linear to 3 crop classes
+- stage head: LayerNorm, Dropout, Linear to 7 phenophase classes
+
+The model returns crop logits and stage logits for every query row.
+
+
+6. Training Objective and Metrics
+
+The training loss is:
+
+total_loss = crop_loss + 0.6 * stage_loss
+
+Crop loss is cross entropy over the three crop classes and is applied to every query row. Stage loss is cross entropy over the seven phenophase stages. In the active configuration, rice_stage_loss_only is true, so the stage loss is counted only for rice rows. This matches the competition objective, where the phenology score is rice-specific.
+
+The model still outputs stage logits for corn and soybean rows because the required result JSON always contains both crop and stage labels. However, the training loss emphasizes rice stage correctness because that is the scored phenology target.
+
+The project records:
+
+- crop accuracy
+- crop macro-F1
+- crop consistency metrics
+- stage accuracy over all crops
+- rice-stage accuracy
+- rice-stage macro-F1
+- joint accuracy
+- competition score
+
+The competition score used internally is:
+
+0.4 * crop_macro_f1 + 0.6 * rice_stage_macro_f1
+
+
+7. Final Inference Pipeline: C03 With P6 Runtime
+
+7.1 Runtime Entry Point
+
+The submission image starts from:
+
+./run.sh
+
+The script:
+
+1. prints runtime diagnostics
+2. detects Python and PyTorch
+3. resolves INPUT_ROOT, OUTPUT_DIR, and WORK_DIR
+4. chooses CANDIDATE=p6 by default
+5. selects configs/submission_c03_p6.json
+6. verifies the platform input files
+7. writes a runtime config into /tmp
+8. validates the package
+9. runs inference.py
+10. verifies that result.json exists
+11. prints a few sample predictions
+
+The final package accepts either:
+
+/input/test_point.csv
+
+or:
+
+/input/points_test.csv
+
+7.2 P6 Configuration
+
+The active P6 config uses:
+
+- checkpoint: checkpoints/c03_full_data_model.pt
+- crop_checkpoint: checkpoints/c03_full_data_model.pt
+- stage_checkpoint: checkpoints/c03_full_data_model.pt
+- normalization_json: artifacts/normalization/train_patch_band_stats.json
+- batch_size: 64
+- device: auto
+- fast_inventory: true
+- use_gdal_env: true
+- use_in_memory_patches: true
+- write_patch_npz: false
+- compressed_patch_npz: false
+- batch_raster_reads: true
+- max_batch_union_pixels: 262144
+- max_batch_union_overread_ratio: 6.0
+- num_io_workers: 16
+- use_crop_consistency: true
+- stage_postprocess: none
+- use_point_stage_bijection: false
+- patch_size: 15
+- valid raw value range: 0.0 < value <= 2.0
+- invalid_fill_value: 0.0
+
+P6 is designed to make the same C03 model run with faster preprocessing. It does not change the trained weights. It does not add XGBoost. It does not add a second model. It does not apply hard stage ordering.
+
+7.3 In-Memory Patch Extraction
+
+Earlier inference paths could write an intermediate test_patches.npz. The P6 path avoids that write by requesting in-memory arrays from build_patch_dataset. This reduces filesystem work and keeps the pipeline simpler during submission inference.
+
+7.4 Fast TIFF Inventory
+
+The fast inventory path keeps the same file-selection rules as the full audit path, but avoids building the complete training-style report dataframe. This is appropriate for inference because the platform only needs predictions, not diagnostic CSV reports.
+
+7.5 GDAL and Raster I/O Configuration
+
+The P6 config sets GDAL options for many small local window reads:
+
+- disable expensive sibling-directory scans on open
+- set read-directory limit to zero
+- increase GDAL cache
+- enable VSI cache
+
+Raster extraction can group nearby patch centers into bounded union windows. The goal is to reduce repeated tiny reads while avoiding excessive overread. The configured limits are:
+
+- max_batch_union_pixels = 262144
+- max_batch_union_overread_ratio = 6.0
+
+If a clustered union would read too much extra data, the code falls back to exact per-patch reads.
+
+7.6 Device Selection
+
+The config uses device=auto. The inference code selects CUDA if torch.cuda.is_available() is true; otherwise it uses CPU. This gives the same container a GPU path on the competition platform and a CPU fallback for local or constrained environments.
+
+7.7 Crop Consistency
+
+The same spatial point can appear in several query rows because it is asked about several dates. Crop type should not change across dates for the same point. The final inference path therefore applies crop consistency:
+
+1. group query rows by point_id
+2. sum crop logits across all query rows for that point
+3. choose the crop with the largest summed logit
+4. assign that crop to all query rows of the point
+
+This preserves the model's evidence while enforcing a semantic constraint.
+
+7.8 Output-Key Consistency
+
+The final result JSON is keyed by longitude, latitude, and date. If duplicate input rows collapse to the same output key, JSON cannot represent conflicting duplicate keys. The inference code detects duplicate output keys and forces identical crop and stage predictions for all rows sharing the key. If there is disagreement, it resolves by majority vote and uses summed logits as a tie breaker.
+
+This prevents arbitrary "first row wins" behavior and makes duplicate handling explicit.
+
+7.9 Stage Postprocessing
+
+The final C03 + P6 submission uses:
+
+stage_postprocess = none
+use_point_stage_bijection = false
+
+Several stage-ordering ideas were studied, including monotonic decoding and hard point-stage bijection. They were not used in the final model because validation evidence and hidden-test behavior did not justify a hard biological ordering override. The model's neural stage logits are used directly.
+
+7.10 No XGBoost in the Final Package
+
+The final C03 + P6 package intentionally removes XGBoost:
+
+- no xgboost dependency in requirements.txt
+- no xgb_stage_model key in submission_c03_p6.json
+- no XGBoost pickle artifact in the package
+- no XGBoost stage override code in the final track1_kybelix submission script
+
+This matters because the goal of the current submission is to test the C03 model with the faster P6 preprocessing path, not to rerun the previous XGBoost-hybrid idea.
+
+
+8. Package Validation
+
+Before inference, scripts/validate_submission.py checks:
+
+- config JSON exists and is valid
+- output_json is an absolute path ending in result.json
+- normalization JSON exists
+- normalization JSON contains 12 bands and per-band mean/std statistics
+- preprocessing uses 12 bands
+- patch_size is 15
+- checkpoint exists
+- checkpoint is under the configured size threshold
+- checkpoint contains model_config and model_state_dict
+- model input channels are 12 or 24
+- model patch size is 15
+- model crop classes are 3
+- model phenophase classes are 7
+- checkpoint state dict loads into the model architecture
+
+The current C03 + P6 package validates successfully with the project venv. The validated checkpoint metadata is:
+
+- checkpoint: checkpoints/c03_full_data_model.pt
+- checkpoint size: 12.55 MB
+- checkpoint epoch: 75
+- checkpoint metric: fixed_epoch_full_data
+- model type: query_cnn_transformer
+- input channels: 24
+- patch size: 15
+- crop classes: 3
+- phenophase classes: 7
+
+
+9. Important Experiments and Submissions
+
+This section records the most important candidate paths and why they mattered. It intentionally excludes delay and timing metrics. Those values should be inserted only after the final submission results are known.
+
+9.1 C00/E1 Safe Baseline
+
+C00/E1 was the earlier safe platform baseline. It used the same general model family: 12 Sentinel-2 bands plus valid-mask channels, query day enabled, acquisition day enabled, and C00-style hyperparameters. It previously reached perfect validation score in the local record and passed the platform. C03 was designed to reproduce this behavior with the current code.
+
+9.2 C03 Validation Checkpoint
+
+C03 was the key reproduced baseline:
+
+- experiment: C03_reproduce_C00_lr0004_bs512_valloss
+- model type: query_cnn_transformer
+- batch size: 512
+- learning rate: 0.0004
+- best epoch: 75
+- best validation competition score: 1.000000
+- best validation crop macro-F1: 1.000000
+- best validation rice-stage macro-F1: 1.000000
+- best validation loss: 0.061087
+
+The C03 validation checkpoint proved that the strong C00 behavior could be reproduced.
+
+9.3 C03 Full-Data Final Model
+
+The full-data C03 model is the final operational submission model. It uses all labeled training samples and a fixed 75 epochs selected from prior validation evidence.
+
+- experiment: full_data_c03_epoch75
+- model type: query_cnn_transformer
+- train queries: 5,446
+- final train competition score: 0.999066
+- final train loss: 0.057580
+- checkpoint size: 12.55 MB
+- parameter count: 3,275,146
+
+This is the model in the current C03 + P6 submission package.
+
+9.4 C03 Platform Baseline Submission
+
+The C03 full-data baseline was already submitted successfully before the final P6 cleanup. It ran on the platform, produced the required result.json, produced 930 unique output rows from 942 query rows, and had zero duplicate-key conflicts. The recorded hidden/test score for that earlier C03 submission was 0.994132. Component labels from the platform table were ambiguous, so crop macro-F1 and rice-stage macro-F1 should be confirmed from a platform export before being cited separately.
+
+9.5 C03 P3 Optimized Pipeline
+
+P3 was an earlier runtime optimization around the C03 model. It introduced several inference-side improvements:
+
+- fast_inventory
+- use_gdal_env
+- use_in_memory_patches
+- write_patch_npz=false
+- compressed_patch_npz=false
+- crop consistency
+
+P3 demonstrated that the model forward pass was not the main bottleneck; raster extraction dominated runtime. This motivated P6, which keeps the C03 model but adds more aggressive raster-window batching and multi-worker I/O. The article should discuss this as an engineering lesson, not as a new model.
+
+9.6 C04 Auxiliary Feature Model
+
+C04 added a 135-dimensional auxiliary feature vector. The auxiliary vector included per-band summaries, vegetation-index summaries, query date features, nearest acquisition distance, nearest-date band medians, and nearest-date vegetation index values.
+
+C04 evidence:
+
+- best validation competition score: 0.995363
+- best validation crop macro-F1: 1.000000
+- best validation rice-stage macro-F1: 0.992272
+- best validation loss: 0.010718
+
+C04 showed that engineered features can improve confidence/loss in some settings, but its rice-stage F1 was not better than C03. It was therefore not selected as the final model.
+
+9.7 C07 No Query Date Ablation
+
+C07 removed query day-of-year while keeping acquisition day enabled.
+
+C07 evidence:
+
+- best validation competition score: 0.436115
+- best validation crop macro-F1: 0.989268
+- best validation rice-stage macro-F1: 0.067347
+- best validation loss: 1.111821
+
+This is one of the most important ablations. Crop prediction stayed relatively strong, but phenology collapsed. This directly proves that the requested query date is essential for stage prediction.
+
+9.8 C08 No Acquisition Date Ablation
+
+C08 removed acquisition day-of-year while keeping query day enabled.
+
+C08 evidence:
+
+- best validation competition score: 0.997683
+- best validation crop macro-F1: 1.000000
+- best validation rice-stage macro-F1: 0.996138
+- best validation loss: 0.197197
+
+This shows that acquisition date is less critical than query date, but still useful for confidence and calibration. The final model keeps acquisition day encoding enabled.
+
+9.9 C09 Shuffle-Label Sanity Check
+
+C09 intentionally shuffled labels.
+
+C09 evidence:
+
+- best validation competition score: 0.178458
+- best validation crop macro-F1: 0.119741
+- best validation rice-stage macro-F1: 0.217603
+- best validation loss: 2.241805
+
+This failure was expected and useful. It reduces concern that the high validation scores came from direct label leakage in the training loop.
+
+9.10 C20 Fourier Time Encoding
+
+C20 replaced the default sine/cosine date encoding with multi-harmonic Fourier time encoding.
+
+C20 validation evidence:
+
+- experiment: C20_c03_fourier_time_encoding
+- best epoch: 77
+- best validation competition score: 1.000000
+- best validation crop macro-F1: 1.000000
+- best validation rice-stage macro-F1: 1.000000
+- best validation loss: 0.001425
+- time encoding type: fourier
+- query encoding type: fourier
+- harmonics: 6
+
+The C20 full-data model trained for 77 epochs reached:
+
+- train queries: 5,446
+- final train competition score: 0.998832
+- final train loss: 0.005722
+
+C20 was a strong innovation candidate because it greatly improved validation loss. However, query-shift diagnostics showed weaker robustness in the +7 day case, and a platform C20 submission scored worse than the C03 operational baseline. The conclusion is that Fourier temporal encoding is useful for the article as an innovation and ablation result, but C20 is not the final safe submission.
+
+9.11 C29 TSViT Comparison Model
+
+C29 TSViT is the high-capability comparison architecture.
+
+C29 full-data evidence:
+
+- model type: query_tsvit
+- checkpoint size: 88.51 MB
+- parameter count: 23,170,666
+- fixed epoch: 42
+- train queries: 5,446
+- final train competition score: 1.000000
+- final train loss: 0.166929
+- input channels: 24
+- patch size: 15
+- token patch size: 3
+- transformer dimension: 320
+- temporal layers: 6
+- spatial layers: 6
+- attention heads: 8
+- Fourier harmonics: 8
+- auxiliary feature dimension: 135
+- auxiliary target: crop_only
+- relative query bias: enabled
+- direct query logit bias: enabled
+
+TSViT factorizes temporal and spatial attention. It creates spatial tokens from the patch, applies temporal encoding, uses temporal attention per spatial token, and then uses spatial class tokens for crop and stage heads. It is architecturally richer than C03, but much heavier. The article should present it as a future/higher-compute path rather than the final low-risk package.
+
+9.12 C12 Hybrid C04 Crop + C03 Stage
+
+C12 combined crop prediction from a C04 full-data checkpoint and stage prediction from a C03 full-data checkpoint. The motivation was to combine a stronger crop/general public signal from C04 with a stronger rice phenology signal from C03. This was a useful hybrid design, but it increases package complexity and was not selected for the final C03 + P6 submission.
+
+9.13 Hybrid C20 Fourier + Full-Data XGBoost
+
+The hybrid C20 + XGBoost package used a neural C20 Fourier checkpoint for crop prediction and an XGBoost model for rice-stage override. Validation evidence before full-data retraining was high, including a hybrid validation score of 0.997683 and strong XGBoost rice-stage macro-F1 on the validation split.
+
+This path was high-upside but riskier. The final C03 + P6 submission deliberately removes it. The article can mention it as a studied alternative and as evidence that tabular feature engineering was investigated, but it should not describe XGBoost as part of the final submitted model unless the submission changes again.
+
+
+10. On-Orbit Feasibility
+
+10.1 Uplink Package
+
+The final package contains:
+
+- source code
+- run.sh
+- Dockerfile
+- requirements.txt
+- config JSON
+- train-derived normalization JSON
+- C03 checkpoint
+
+The final package excludes:
+
+- raw training TIFFs
+- training artifacts
+- unused checkpoints
+- XGBoost artifacts
+- TSViT checkpoint
+- large intermediate NPZ files
+
+The C03 checkpoint is 12.55 MB. The code and configuration are small compared with the checkpoint. The PyTorch/CUDA base image is provided by the platform, so the submitted repository does not need to include PyTorch itself.
+
+10.2 Runtime Environment
+
+The official PyTorch base environment provides:
+
+- Ubuntu 22.04 base
+- PyTorch 2.5.1 with CUDA 12.1
+- cuDNN 9
+- Python 3.11-compatible runtime
+- rasterio, numpy, pandas, scipy, torchvision, torchaudio, and related core libraries
+
+The final requirements.txt is minimal:
+
+- numpy
+- pandas
+- rasterio
+
+PyTorch is not installed manually by the submission because the base image already provides it.
+
+10.3 Compute Strategy
+
+The pipeline naturally separates CPU and GPU work:
+
+- CPU: file discovery, TIFF metadata, point mapping, raster window reads, patch cleaning, normalization
+- GPU when available: C03 neural inference
+- CPU fallback: supported through device=auto
+
+This supports heterogeneous scheduling in an on-orbit or edge setting. The model is small enough that CPU fallback remains possible, while GPU acceleration can be used when available.
+
+10.4 Memory and Storage
+
+The model itself is compact. The largest temporary memory object is the extracted patch tensor. The tensor size scales with:
+
+batch_size x time_steps x channels x patch_height x patch_width
+
+For C03, channels are 24 after adding valid-mask channels. The patch size is fixed at 15 x 15. The sequence length depends on the region's available acquisition dates. The final P6 path avoids writing a test NPZ unless explicitly configured, reducing temporary disk use.
+
+10.5 Fault Tolerance and Validation
+
+The pipeline includes several fault-tolerance features:
+
+- accepts both test_point.csv and points_test.csv
+- validates config and checkpoint before inference
+- supports CPU fallback
+- handles duplicate output keys deterministically
+- allows nearest-region fallback in inference mode
+- records file read failures and patch extraction errors
+- uses deterministic file selection
+- does not download external data at inference time
+
+10.6 Latency and Delay Metrics
+
+Final C03 + P6 latency and delay metrics from the successful platform submission:
+
+- GitLab pipeline ID: 3551
+- build job ID: 8756
+- create-job ID: 8757
+- Nanhu job ID: jb-aitrain-155971174067631808
+- algorithm UUID: dc78cd33-fb3b-4411-acc4-bc84defcb9fc
+- image tag: zero2x_repository:a499cc66-3551
+- image digest: sha256:85335bc02b9a8a233f406240528a5d87605732650388920c16e131dfb2f229a9
+- submission table timestamp: 2026-05-02 01:51:20
+- card consumption time: 0.0053 H, about 19.08 s
+- end-to-end container runtime: about 16.34 s by detailed log timestamps, about 17 s by rounded UTC lines
+- package validation duration: about 1.48 s
+- inference duration to JSON report: about 11.99 s
+- inference duration to write confirmation: about 12.54 s
+- internal total runtime: 10.1582 s
+- patch extraction duration: 8.3716 s
+- model load duration: 0.4128 s
+- model forward duration: 0.3902 s
+- postprocess duration: 0.0347 s
+- result write duration: 0.0368 s
+- worst-case latency estimate from this run: use 19.08 s card consumption for platform-facing reporting
+
+Do not cite old P3 or C20 delay values as the final P6 result. Use the final C03 + P6 platform logs above.
+
+
+11. Innovation of the Implementation Path
+
+The main innovation is not a single exotic model component. It is the complete query-aware, deployment-focused design:
+
+1. Multi-temporal point-centered Sentinel-2 patch tensor construction
+2. Explicit valid-mask channels for remote-sensing missing/invalid pixels
+3. Query-day conditioning for date-specific phenology
+4. Separate crop and stage heads sharing a seasonal representation
+5. Rice-specific stage loss aligned with the scoring objective
+6. Crop consistency across query dates for the same point
+7. Deterministic output-key conflict resolution
+8. Fast inference-oriented raster extraction
+9. Small final checkpoint suitable for constrained deployment
+10. Larger TSViT and Fourier variants kept as research comparisons
+
+Compared with a ground-only workflow, this design emphasizes moving compact models and compact predictions instead of raw imagery. The satellite-side or edge-side system can read local imagery, produce crop and phenology status, and downlink only the JSON result or aggregated products. This reduces bandwidth demand and supports faster decision-making.
+
+The C03 final model is intentionally conservative. The innovation story is strengthened by the experimental record: TSViT, Fourier time encoding, auxiliary features, and XGBoost were all investigated, but the final system chooses the smallest reliable model for operational submission.
+
+
+12. Value and Application Scenarios
+
+The practical value is agricultural monitoring from space imagery. The system can support:
+
+- rice growth-stage tracking
+- corn, rice, and soybean classification
+- crop-season progress monitoring
+- food-security analysis
+- regional agricultural reporting
+- early warning for abnormal seasonal development
+- satellite-terrestrial coordination where orbit-side inference filters large imagery streams before ground analysis
+
+For decision makers, the output is not a raw image. It is a structured crop and phenology product tied to points and dates. This makes it easier to integrate into dashboards, reports, crop calendars, and downstream agricultural analytics.
+
+
+13. Future Roadmap
+
+Near term:
+
+- final C03 + P6 platform result recorded
+- final latency, hidden score, and platform secondary metric recorded
+- verify duplicate-key conflict count, extracted sample count, file read failure count, and patch extraction error count
+- compare final P6 runtime diagnostics against previous C03 paths without changing the article's model claims
+
+Mid term:
+
+- distill C29 TSViT or C20 Fourier behavior into a smaller C03-like model
+- test quantization and pruning for smaller uplink size
+- improve raster read scheduling for larger hidden test sets
+- add stronger robustness diagnostics for query-date shifts and missing bands
+
+Long term:
+
+- deploy a two-tier model strategy: C03 as the safe low-resource model and TSViT as the high-capability model for stronger compute nodes
+- add region-aware or season-aware model selection
+- integrate orbit-side inference with ground-side retraining and validation loops
+- build autonomous failure recovery for partial/corrupted TIFF inputs
+
+
+13A. Collected Metrics Appendix For Article
+
+This appendix records the measured metrics found in the project folders and the final C03 + P6 platform log supplied after submission. It should be used as the source for the article's comparison tables. Historical C03, P3, and C20 values are included for comparison, but the final P6 values should be used for the final submission result.
+
+13A.1 Classic C03 Full-Data Baseline Without P6
+
+This is the earlier successful C03 platform submission before the final P6 cleanup.
+
+Submission identity:
+
+- local submission repo: /Users/yusuf/Desktop/finalround/track1_kybelix
+- Git commit: c5f95232a4670f5f2b461ada3fff0b966a6a276f
+- GitLab pipeline ID: 3337
+- GitLab build job ID: 8288
+- GitLab create-job ID: 8289
+- Nanhu job ID: jb-aitrain-155893052943654656
+- algorithm UUID: 5fcf3423-9b30-48f2-b600-79296f6e6bfd
+- image tag: zero2x_repository:c5f95232-3337
+- image digest: sha256:653e0e0743b413d4a0e23e2f481ca43a36167f388a39bcffd2706ae648151b72
+- platform table time: 2026-04-30 08:27:55
+
+Model and package:
+
+- candidate: C03
+- model type: query_cnn_transformer
+- checkpoint path in image: /workspace/checkpoints/model.pt
+- checkpoint size: 12.55 MB
+- checkpoint epoch: 75
+- checkpoint metric: fixed_epoch_full_data
+- parameter count: 3,275,146
+- input channels: 24
+- patch size: 15 x 15
+- crop classes: 3
+- phenophase classes: 7
+- valid-mask channels: enabled
+- auxiliary features: disabled
+- crop consistency: enabled
+- stage postprocess: none
+- point-stage bijection: disabled
+
+Platform environment:
+
+- runtime compute spec: Z2120-cuda12.8-80Gx1-8C100G
+- runtime node: nm129-a100-80g-113
+- Python: 3.11.10
+- PyTorch: 2.5.1+cu121
+- GPU: NVIDIA A100-SXM4-80GB
+- CUDA available: true
+- Docker build CPU count: 16
+- Docker build memory: 46.77 GiB
+
+Score and consumption:
+
+- hidden/test score: 0.994132
+- visible secondary metric from the platform table: 0.938218
+- card consumption time: 0.0119 H
+- crop macro-F1: not safely confirmed from the pasted platform column labels
+- rice-stage macro-F1: not safely confirmed from the pasted platform column labels
+
+Delay and runtime:
+
+- build job duration: about 221 s
+- Java service create-job duration: about 7 s
+- runtime start: 2026-04-30T00:27:54Z
+- runtime done: 2026-04-30T00:28:36Z
+- end-to-end container runtime: about 42 s
+- package validation duration: about 1.43 s
+- inference command duration: about 37.97 s
+- result JSON write confirmed at 08:28:36.490
+
+Input/output diagnostics:
+
+- platform points file: /input/test_point.csv
+- TIFF directory: /input/region_test
+- TIFF count: 2235
+- query rows: 942
+- unique output keys / final result rows: 930
+- duplicate output-key rows: 12
+- duplicate output-key conflicts: 0
+- unique points extracted: 171
+- samples kept: 171
+- samples dropped: 0
+- output JSON: /mnt/si000886fq1w/default/output/result.json
+
+Patch diagnostics:
+
+- patch tensor shape: [171, 27, 12, 15, 15]
+- max timesteps: 27
+- total time cells: 2997
+- padded time cells: 1620
+- samples with time padding: 164
+- missing band cells: 0
+- samples with missing bands: 0
+- observed patch pixels: 8,091,900
+- valid patch pixels: 7,485,120
+- invalid patch pixels: 606,780
+- global valid pixel ratio: 0.9250139028
+- samples with any invalid pixel: 165
+- samples requiring edge replication: 7
+- edge replication band cells: 1632
+- center clamping band cells: 0
+- file read failures: 0
+- patch extraction errors: 0
+- mapping status counts: unique_region=169, overlap_multi_region=2
+
+Prediction distribution:
+
+- crop counts: corn=474, rice=196, soybean=272
+- stage counts: Greenup=47, MidGreenup=147, Peak=151, Maturity=136, MidSenescence=164, Senescence=239, Dormancy=58
+
+Interpretation for the article:
+
+Classic C03 is the strongest measured hidden-platform baseline in the archived logs. It is small, stable, and passed the full output contract. Its platform score is much higher than the C20 Fourier platform score, and its local CPU benchmark is much faster than TSViT. The limitation is that this original log did not include fine-grained internal timing, so the exact split between patch extraction, model load, forward pass, and writing is not available for this run.
+
+13A.2 C03 P3 Optimized Pipeline
+
+P3 is not a different model. It is the same C03 full-data model with faster preprocessing flags before the final P6 packaging.
+
+Submission identity:
+
+- Git commit: 5d87087888dcc537fd6dc9b897cb5f37e203fc1f
+- GitLab pipeline ID: 3448
+- GitLab build job ID: 8541
+- GitLab create-job ID: 8542
+- Nanhu job ID: jb-aitrain-155924679797274304
+- algorithm UUID: 97ea585c-1584-4bc4-bda1-02ddc5b6670c
+- image tag: zero2x_repository:5d870878-3448
+- image digest: sha256:75fbe05c30bc644bb5f7a2c97d6abe176e3664a72ad662912be662949bc866f6
+
+Pipeline flags confirmed active:
+
+- fast_inventory: true
+- use_gdal_env: true
+- use_in_memory_patches: true
+- write_patch_npz: false
+- stage postprocess: none
+- batch_raster_reads: not active in this P3 run
+
+Outer timing:
+
+- runtime start: 2026-04-30T17:13:16Z
+- runtime done: 2026-04-30T17:13:58Z
+- end-to-end container runtime: about 41.35 s
+- package validation duration: about 1.61 s
+- inference command duration to JSON report: about 37.06 s
+- inference command duration to write confirmation: about 37.59 s
+- card consumption time: exact platform value was not captured; user observed no meaningful change from the classic C03 card time
+
+Internal timing:
+
+- total_seconds: 35.3711
+- patch_extraction_seconds: 33.4366
+- model_load_seconds: 0.4714
+- npz_and_query_rows_seconds: 0.2252
+- batch_prepare_seconds: 0.6330
+- model_forward_seconds: 0.4281
+- logits_to_cpu_seconds: 0.0011
+- postprocess_seconds: 0.0340
+- write_result_seconds: 0.0354
+- queries_per_total_second: 26.6319
+- queries_per_forward_second: 2200.5350
+
+Patch-build timing:
+
+- load_points_seconds: 0.0106
+- audit_tiff_files_seconds: 0.1546
+- select_file_index_seconds: 0.0
+- build_region_catalog_seconds: 0.0424
+- map_points_to_regions_seconds: 0.0142
+- prepare_metadata_seconds: 0.0006
+- build_lookup_and_allocate_seconds: 0.0231
+- extract_raster_patches_seconds: 33.1392
+- summarize_metadata_seconds: 0.0174
+- write_npz_seconds: 0.0
+- build_report_seconds: 0.0264
+- total_build_patch_dataset_seconds: 33.4304
+
+Output checks:
+
+- query rows: 942
+- unique output keys / result rows: 930
+- duplicate output-key rows: 12
+- duplicate output-key conflicts: 0
+- unique points extracted: 171
+- samples kept: 171
+- samples dropped: 0
+- missing band cells: 0
+- file read failures: 0
+- patch extraction errors: 0
+- mapping status counts: unique_region=169, overlap_multi_region=2
+- crop counts: corn=474, rice=196, soybean=272
+- stage counts: Greenup=47, MidGreenup=147, Peak=151, Maturity=136, MidSenescence=164, Senescence=239, Dormancy=58
+
+Interpretation for the article:
+
+P3 showed that the model itself is not the bottleneck. The forward pass was only 0.4281 s, while patch extraction took 33.4366 s, and direct raster window extraction accounted for 33.1392 s. This motivated P6: keep the C03 model fixed and optimize raster access rather than replacing the model.
+
+13A.3 C20 Fourier Model
+
+C20 is the Fourier time-encoding comparison model. It is useful for the innovation section, but the archived platform score makes it unsuitable as the final operational model.
+
+Training and validation evidence:
+
+- validation experiment: C20 Fourier time encoding
+- best validation epoch: 77
+- best validation competition score: 1.0
+- best validation crop macro-F1: 1.0
+- best validation rice-stage macro-F1: 1.0
+- best validation loss: 0.0014254564658714268
+- full-data retrain: full_data_c20_fourier_epoch77
+- full-data train queries: 5446
+- full-data final train competition score: 0.9988319061732619
+- full-data final train loss: 0.005722221134492483
+
+Model:
+
+- model type: query_cnn_transformer
+- checkpoint size: 12.57 MB
+- checkpoint epoch: 77
+- input channels: 24
+- patch size: 15 x 15
+- crop classes: 3
+- phenophase classes: 7
+- time encoding: Fourier
+- query encoding: Fourier
+- Fourier harmonics: 6
+- valid-mask channels: enabled
+- auxiliary features: disabled
+- crop consistency: enabled
+- platform stage postprocess: transition_viterbi
+- point-stage bijection: disabled
+
+Platform identity:
+
+- GitLab checkout commit in log: 864547fe
+- GitLab pipeline ID: 3409
+- GitLab build job ID: 8458
+- GitLab create-job ID: 8459
+- Nanhu job ID: jb-aitrain-155912915927987904
+- algorithm UUID: 2b089539-87f9-4502-b810-a8f2ce2e3141
+- image tag: zero2x_repository:864547fe-3409
+- image digest: sha256:6db318f21235a6adc7d9462849f382f1cce83150922b01f59de8391b4d10aba1
+- platform table time: 2026-04-30 18:59:18
+- status: Succeed
+
+Platform score and consumption:
+
+- hidden/test score: 0.907497
+- card consumption time: 0.0106 H, about 38.16 s
+- visible component metrics: not present in the pasted platform table/log
+
+Delay and runtime:
+
+- build job duration: about 231 s
+- Java service create-job duration: about 7 s
+- runtime start: 2026-04-30T10:59:18Z
+- runtime done: 2026-04-30T10:59:55Z
+- end-to-end container runtime from log: about 36.90 s
+- package validation duration: about 1.47 s
+- inference command duration to JSON report: about 32.71 s
+- inference command duration to write confirmation: about 33.16 s
+- fine-grained internal timing: not available in the pasted log
+
+Input/output and patch diagnostics:
+
+- TIFF count: 2235
+- query rows: 942
+- unique output keys / final result rows: 930
+- duplicate output-key rows: 12
+- duplicate output-key conflicts: 0
+- unique points extracted: 171
+- samples kept: 171
+- samples dropped: 0
+- patch tensor shape: [171, 27, 12, 15, 15]
+- missing band cells: 0
+- global valid pixel ratio: 0.9250139028
+- file read failures: 0
+- patch extraction errors: 0
+- mapping status counts: unique_region=169, overlap_multi_region=2
+
+Prediction distribution:
+
+- crop counts: corn=468, rice=196, soybean=278
+- stage counts: Greenup=47, MidGreenup=155, Peak=145, Maturity=159, MidSenescence=224, Senescence=149, Dormancy=63
+
+Interpretation for the article:
+
+C20 validates the idea that richer seasonal time encoding can improve validation confidence. However, the hidden platform score was 0.907497, compared with 0.994132 for classic C03. C20 was slightly lower in card time, 0.0106 H versus 0.0119 H for classic C03, but the score loss of 0.086635 is too large for final operational use.
+
+13A.4 C29 TSViT Model
+
+C29 TSViT is the heavier comparison architecture. I found training/full-data metrics, checkpoint metadata, and local delay benchmarks. I did not find a TSViT platform submission row, hidden score, card consumption time, or Nanhu job log in the searched project, project_organized, and models folders. If TSViT was submitted separately, its platform log should be pasted or linked before the article cites TSViT platform delay or consumption.
+
+Full-data evidence:
+
+- experiment: full_data_c29_tsvit_relative_aux_crop_submission
+- training mode: full_data_fixed_epoch
+- epoch: 42
+- train queries: 5446
+- final train competition score: 1.0
+- final train loss: 0.16692913118701974
+- validation sidecar in organized archive: not found
+
+Model:
+
+- model type: query_tsvit
+- checkpoint: checkpoints/c29_tsvit_model.pt
+- checkpoint size: 88.51 MB
+- checkpoint epoch: 42
+- parameter count: 23,170,666
+- input channels: 24
+- patch size: 15 x 15
+- token patch size: 3
+- transformer dimension: 320
+- temporal layers: 6
+- spatial layers: 6
+- attention heads: 8
+- MLP ratio: 4.0
+- dropout: 0.18
+- crop classes: 3
+- phenophase classes: 7
+- time encoding: Fourier
+- query encoding: Fourier
+- Fourier harmonics: 8
+- auxiliary feature dimension: 135
+- auxiliary hidden dimension: 96
+- auxiliary target: crop_only
+- relative query bias: enabled
+- direct query logit bias: enabled
+
+Local CPU synthetic benchmark:
+
+- device: CPU
+- PyTorch version in benchmark: 2.8.0
+- load time: 0.0354 s
+- batch size: 32
+- time steps: 29
+- median forward time: 808.742 ms
+- mean forward time: 810.015 ms
+- median rows per second: 39.568
+- mean rows per second: 39.505
+
+Comparison against C03 in the same benchmark:
+
+- C03 checkpoint: 12.55 MB; TSViT checkpoint: 88.51 MB
+- C03 parameters: 3,275,146; TSViT parameters: 23,170,666
+- C03 median forward: 188.397 ms at batch 64; TSViT median forward: 808.742 ms at batch 32
+- C03 median rows per second: 339.708; TSViT median rows per second: 39.568
+- TSViT is about 7.05 times larger by checkpoint size, about 7.07 times larger by parameter count, and about 8.59 times slower by rows/second in this CPU proxy benchmark
+
+Interpretation for the article:
+
+TSViT is valuable as the high-capability architecture and future high-compute path. It uses explicit temporal-spatial token mixing and richer auxiliary/query structure. The deployment tradeoff is clear: it is much larger and slower than C03 in the local benchmark, and no platform card-consumption evidence was found in the local archive.
+
+13A.5 Local Pipeline Metrics Leading To P6
+
+The final P6 config combines the C03 model with fast inventory, GDAL settings, in-memory patches, no NPZ write, bounded batched raster reads, and 16 I/O workers. The local optimization history explains why this was chosen.
+
+Local CPU smoke benchmark, 21 query rows and 3 unique points:
+
+- P0 total_seconds median: 0.8085
+- P1 total_seconds median: 0.6430
+- P2 total_seconds median: 0.6320
+- P3 total_seconds median: 0.5521
+- P4 total_seconds median: 0.5532
+- P5 total_seconds median: 0.5494
+- P0 patch_extraction_seconds median: 0.7211
+- P3 patch_extraction_seconds median: 0.4727
+- P5 patch_extraction_seconds median: 0.4801
+- P0 raster read calls: 540
+- P3 raster read calls: 540
+- P4/P5 raster read calls: 180
+- P0/P3 raster pixels read: 121,500
+- P4/P5 raster pixels read: 394,740
+- all versions matched P0 output JSON
+- all versions had 0 missing band cells, 0 file read failures, and 0 patch extraction errors on the local smoke input
+
+P6 final submission package:
+
+- Git commit pushed to GitLab: a499cc664e7420388debd61024a252ee57fd57f9
+- commit message: Submit C03 P6 neural pipeline
+- remote branch: origin/main
+- remote verification: refs/heads/main points to a499cc664e7420388debd61024a252ee57fd57f9
+- model: C03 full-data epoch-75 checkpoint
+- XGBoost: removed
+- TSViT: removed from submission package
+- run.sh candidate default: p6
+- config: configs/submission_c03_p6.json
+- batch_raster_reads: true
+- max_batch_union_pixels: 262144
+- max_batch_union_overread_ratio: 6.0
+- num_io_workers: 16
+- GDAL_CACHEMAX: 2048
+- write_patch_npz: false
+- stage_postprocess: none
+- point-stage bijection: false
+- validation before push: passed
+- Python compile before push: passed
+- XGBoost string scan before push: no xgb/XGBoost/xgboost/P5 matches in the submission repo
+- platform run status: Succeed
+- platform table submission time: 2026-05-02 01:51:20
+- hidden/test score: 0.994132
+- visible secondary metric from platform table: 0.938218
+- card consumption time: 0.0053 H, about 19.08 s
+
+Final P6 platform submission log:
+
+- GitLab checkout: a499cc66 as detached HEAD from main
+- GitLab pipeline ID: 3551
+- GitLab build job ID: 8756
+- GitLab create-job ID: 8757
+- Nanhu job ID: jb-aitrain-155971174067631808
+- algorithm UUID: dc78cd33-fb3b-4411-acc4-bc84defcb9fc
+- image tag: zero2x_repository:a499cc66-3551
+- image digest: sha256:85335bc02b9a8a233f406240528a5d87605732650388920c16e131dfb2f229a9
+- platform table score: 0.994132
+- platform table secondary metric: 0.938218
+- platform table card consumption: 0.0053 H, about 19.08 s
+- platform table status: Succeed
+- platform table submission time: 2026-05-02 01:51:20
+- build context size: 13.38 MB
+- build job total window: about 217 s, from 1777657647 to 1777657864
+- build step_script window: about 197 s, from 1777657664 to 1777657861
+- create-job window: about 5 s, from 1777657866 to 1777657871
+- Docker build base image extraction stage: 190.2 s
+- Docker export image stage: 4.4 s
+- requirements install stage: 0.8 s; numpy, pandas, and rasterio were already satisfied in the base image
+- runtime compute spec: Z2120-cuda12.8-80Gx1-8C100G
+- runtime node: nm129-a100-80g-113
+- Python: 3.11.10
+- PyTorch: 2.5.1+cu121
+- GPU: NVIDIA A100-SXM4-80GB
+- CUDA available: true
+- runtime start: 2026-05-01T17:51:20Z
+- runtime done: 2026-05-01T17:51:37Z
+- end-to-end container runtime: about 16.34 s by detailed log timestamps, about 17 s by rounded UTC lines
+- package validation start: 2026-05-02 01:51:22.703913 platform log time
+- package validation output: 2026-05-02 01:51:24.182514 platform log time
+- package validation duration: about 1.48 s
+- inference command start: 2026-05-02 01:51:24.487027 platform log time
+- inference JSON report: 2026-05-02 01:51:36.472218 platform log time
+- inference command duration to JSON report: about 11.99 s
+- result JSON write confirmed: 2026-05-02 01:51:37.024073 platform log time
+- inference command duration to write confirmation: about 12.54 s
+- final done line: 2026-05-02 01:51:37.077325 platform log time
+
+Final P6 internal timing:
+
+- total_seconds: 10.158237552270293
+- patch_extraction_seconds: 8.371568411588669
+- model_load_seconds: 0.41284748911857605
+- npz_and_query_rows_seconds: 0.2158730886876583
+- batch_prepare_seconds: 0.587285079061985
+- model_forward_seconds: 0.3902486003935337
+- logits_to_cpu_seconds: 0.0010857637971639633
+- postprocess_seconds: 0.03468441590666771
+- write_result_seconds: 0.036754095926880836
+- queries_per_total_second: 92.73262169277285
+- queries_per_forward_second: 2413.8459408952917
+
+Final P6 patch-build timing:
+
+- load_points_seconds: 0.016045302152633667
+- audit_tiff_files_seconds: 0.13455267809331417
+- select_file_index_seconds: 0.0
+- build_region_catalog_seconds: 0.06557486951351166
+- map_points_to_regions_seconds: 0.018553484231233597
+- prepare_metadata_seconds: 0.0004030093550682068
+- build_lookup_and_allocate_seconds: 0.02137756161391735
+- extract_raster_patches_seconds: 8.05330559052527
+- summarize_metadata_seconds: 0.02414361573755741
+- write_npz_seconds: 0.0
+- build_report_seconds: 0.027783894911408424
+- total_build_patch_dataset_seconds: 8.363947227597237
+
+Final P6 output diagnostics:
+
+- output JSON: /mnt/si000886fq1w/default/output/result.json
+- input points file: /input/test_point.csv
+- TIFF directory: /input/region_test
+- region_test TIFF count: 2235
+- query rows: 942
+- unique output keys / result rows: 930
+- duplicate output-key rows: 12
+- duplicate output-key conflicts: 0
+- unique points: 171
+- samples kept: 171
+- samples dropped: 0
+- filename status counts: valid=2196, duplicate_canonical=38, unsupported_band=1
+- region count: 11
+- selected file rows: 2184
+- selected file collision groups: 12
+- selected L2A rows: 2184
+- selected L1C rows: 0
+- patch tensor shape: [171, 27, 12, 15, 15]
+- total time cells: 2997
+- max timesteps: 27
+- padded time cells: 1620
+- samples with time padding: 164
+- observed band cells: 35964
+- missing band cells: 0
+- samples with missing bands: 0
+- observed patch pixels: 8,091,900
+- valid patch pixels: 7,485,120
+- invalid patch pixels: 606,780
+- global valid pixel ratio: 0.9250139027916806
+- samples with any invalid pixel: 165
+- samples requiring edge replication: 7
+- edge replication band cells: 1632
+- center clamped band cells: 0
+- samples with center clamping: 0
+- file read failures: 0
+- patch extraction errors: 0
+- mapping status counts: unique_region=169, overlap_multi_region=2
+- batch_raster_reads: true
+- max_batch_union_pixels: 262144
+- max_batch_union_overread_ratio: 6.0
+- raster_read_calls: 33708
+- raster_batch_read_calls: 1176
+- raster_fallback_patch_read_calls: 32532
+- raster_pixels_read: 9800820
+- raster_batch_clusters: 15468
+- raster_batched_patch_count: 3432
+- raster_fallback_patch_count: 32532
+- num_io_workers: 16
+- crop counts: corn=474, rice=196, soybean=272
+- stage counts: Greenup=47, MidGreenup=147, Peak=151, Maturity=136, MidSenescence=164, Senescence=239, Dormancy=58
+
+Interpretation for the article:
+
+The P6 story should be written as an inference-engineering improvement around the already selected C03 model. It is not a new model and it does not change the training result. The final P6 platform run kept the same hidden/test score as classic C03, 0.994132, while reducing card consumption from 0.0119 H to 0.0053 H. The local metrics show that preprocessing dominates wall time, while the P3 platform metrics showed that raster reads dominated real platform runtime. The final P6 platform run reduced internal total runtime from the P3 run's 35.3711 s to 10.1582 s, and reduced patch extraction from 33.4366 s to 8.3716 s, while keeping the same prediction distribution and output diagnostics as classic C03/P3. This is the strongest evidence that P6 improved runtime without changing model behavior.
+
+
+14. Final Results
+
+This section records the final C03 + P6 platform submission.
+
+Final submission identity:
+
+- Git commit: a499cc664e7420388debd61024a252ee57fd57f9
+- Commit message: Submit C03 P6 neural pipeline
+- Remote branch: origin/main
+- Remote verification: refs/heads/main points to a499cc664e7420388debd61024a252ee57fd57f9
+- GitLab pipeline ID: 3551
+- build job ID: 8756
+- create-job ID: 8757
+- Nanhu job ID: jb-aitrain-155971174067631808
+- algorithm UUID: dc78cd33-fb3b-4411-acc4-bc84defcb9fc
+- image tag: zero2x_repository:a499cc66-3551
+- image digest: sha256:85335bc02b9a8a233f406240528a5d87605732650388920c16e131dfb2f229a9
+- submission time: 2026-05-02 01:51:20
+- status: Succeed
+
+Final score:
+
+- hidden/test total score: 0.994132
+- crop macro-F1: not safely confirmed from the pasted platform column labels
+- rice phenology macro-F1: not safely confirmed from the pasted platform column labels
+- platform visible secondary metric: 0.938218
+- card consumption: 0.0053 H, about 19.08 s
+
+Final output diagnostics:
+
+- input points file: /input/test_point.csv
+- region_test TIFF count: 2235
+- query rows: 942
+- unique output keys: 930
+- duplicate output-key rows: 12
+- duplicate output-key conflicts: 0
+- unique points extracted: 171
+- samples kept: 171
+- samples dropped: 0
+- missing band cells: 0
+- file read failures: 0
+- patch extraction errors: 0
+- mapping status counts: unique_region=169, overlap_multi_region=2
+- crop prediction distribution: corn=474, rice=196, soybean=272
+- stage prediction distribution: Greenup=47, MidGreenup=147, Peak=151, Maturity=136, MidSenescence=164, Senescence=239, Dormancy=58
+
+Final delay and timing:
+
+- build job total window: about 217 s
+- create-job window: about 5 s
+- end-to-end container runtime: about 16.34 s by detailed log timestamps, about 17 s by rounded UTC lines
+- package validation duration: about 1.48 s
+- inference command duration to JSON report: about 11.99 s
+- inference command duration to write confirmation: about 12.54 s
+- internal total_seconds: 10.1582
+- internal patch_extraction_seconds: 8.3716
+- internal model_load_seconds: 0.4128
+- internal batch_prepare_seconds: 0.5873
+- internal model_forward_seconds: 0.3902
+- internal postprocess_seconds: 0.0347
+- internal write_result_seconds: 0.0368
+- queries_per_total_second: 92.7326
+- queries_per_forward_second: 2413.8459
+
+
+15. Short Article-Style Explanation
+
+Our solution is built around a simple observation: crop type is mostly a property of the location and its seasonal image pattern, but phenological stage is a property of the location at a requested date. A model cannot reliably predict rice phenology unless it knows the query date. Therefore, we designed a query-aware Sentinel-2 time-series model.
+
+For each point, the preprocessing system finds the relevant Sentinel-2 TIFF files, chooses one file per region, date, and band, maps the longitude and latitude into raster coordinates, and extracts a 15 x 15 patch for each of 12 Sentinel-2 bands across all available acquisition dates. Invalid pixels are filled but also recorded in a valid mask. The final model receives both the normalized spectral values and the mask channels, so it can distinguish missing or invalid observations from real reflectance.
+
+Each acquisition date is encoded by a small CNN. The model adds acquisition day-of-year information, processes the full sequence with a Transformer, then pools only valid acquisition dates. A separate query day-of-year encoding tells the model which date the phenology question is asking about. The model combines the seasonal image representation and the query-date representation to predict both crop type and phenophase stage.
+
+Training uses crop cross entropy for all query rows and rice-stage cross entropy for rice rows, matching the competition's scoring focus. The final model was selected because it reproduced the earlier high-confidence C00 baseline, achieved perfect validation crop and rice-stage macro-F1 in the validation evidence, and remained compact enough for constrained deployment. The final full-data checkpoint uses all labeled query rows and is only 12.55 MB.
+
+The final submission uses the C03 model inside the P6 inference pipeline. P6 keeps the same model weights but improves inference-side data preparation with fast TIFF inventory, GDAL configuration, in-memory patch arrays, no intermediate NPZ write, multi-worker I/O, and bounded raster-window batching. The package writes exactly /output/result.json and includes validation checks before running inference. The final package does not use XGBoost, does not use TSViT, and does not use a model ensemble.
+
+The broader experiment history supports the final design. Removing query date caused rice-stage prediction to collapse, proving that query conditioning is essential. Removing acquisition date kept much of the score but worsened confidence, so acquisition timing remains useful. Removing valid-mask channels hurt performance, so mask channels remain part of the final input. Fourier temporal encoding and TSViT were valuable innovation paths, but the final operational submission prioritizes the smaller and safer C03 model.
+
+The result is an end-to-end satellite inference system: platform input is mounted, TIFFs are transformed into point-centered time-series tensors, a compact query-aware neural model predicts crop and phenology labels, consistency logic resolves semantic and JSON-key constraints, and the final product is downlinked as a compact result JSON.
