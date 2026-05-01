@@ -158,7 +158,6 @@ def _patch_window(src, meta: RasterMeta, lon: float, lat: float, patch_size: int
     pad_top = crop_top - y0
     pad_right = x1 - crop_right
     pad_bottom = y1 - crop_bottom
-
     return PatchWindow(
         pixel_x=int(pixel_x),
         pixel_y=int(pixel_y),
@@ -221,7 +220,11 @@ def extract_patches_edge_batched_from_src(
     max_union_pixels: int = 262144,
     max_overread_ratio: float = 6.0,
 ) -> tuple[list[PatchExtraction], bool, int]:
-    """Extract edge-padded patches, using one union window when bounded."""
+    """Extract same edge-padded patches, optionally from one union read.
+
+    Returns ``(patches, used_batch_read, pixels_read)``. If the union window
+    would read too much extra data, this falls back to exact per-patch reads.
+    """
 
     specs = [_patch_window(src, meta, lon, lat, patch_size) for lon, lat in points]
     if not specs:
@@ -250,119 +253,109 @@ def extract_patches_edge_batched_from_src(
     union = np.asarray(union, dtype=np.float32)
     out = []
     for spec in specs:
-        row_start = spec.crop_top - union_top
-        row_end = spec.crop_bottom - union_top
-        col_start = spec.crop_left - union_left
-        col_end = spec.crop_right - union_left
-        out.append(_patch_extraction_from_array(union[row_start:row_end, col_start:col_end], spec, patch_size))
+        r0 = spec.crop_top - union_top
+        r1 = spec.crop_bottom - union_top
+        c0 = spec.crop_left - union_left
+        c1 = spec.crop_right - union_left
+        out.append(_patch_extraction_from_array(union[r0:r1, c0:c1], spec, patch_size))
     return out, True, int(union.size)
 
 
-def _block_shape(src) -> tuple[int, int]:
+def _default_batch_tile_size(src, max_union_pixels: int, patch_size: int) -> int:
+    """Choose a practical spatial bin size for clustered window reads.
+
+    Native TIFF blocks are preferred when they are small enough to be useful.
+    Striped TIFFs often report very wide blocks; in that case use a square tile
+    derived from the configured union-pixel cap.
+    """
+
+    fallback = max(patch_size, int(math.sqrt(max(max_union_pixels, patch_size * patch_size))))
     try:
-        block_height, block_width = src.block_shapes[0]
-    except Exception:  # pragma: no cover - rasterio driver fallback
-        block_height, block_width = src.height, src.width
-    return max(1, int(block_height)), max(1, int(block_width))
+        block_h, block_w = src.block_shapes[0]
+        block_pixels = int(block_h) * int(block_w)
+        if patch_size <= block_h <= fallback and patch_size <= block_w <= fallback and block_pixels <= max_union_pixels:
+            return int(max(block_h, block_w))
+    except Exception:
+        pass
+    return int(fallback)
 
 
-def _block_window(src, block_row: int, block_col: int, block_height: int, block_width: int) -> tuple[Window, int, int, int, int]:
-    row_start = block_row * block_height
-    col_start = block_col * block_width
-    row_end = min(src.height, row_start + block_height)
-    col_end = min(src.width, col_start + block_width)
-    return (
-        Window(col_start, row_start, col_end - col_start, row_end - row_start),
-        row_start,
-        col_start,
-        row_end,
-        col_end,
-    )
-
-
-def extract_patches_edge_block_cached_from_src(
+def extract_patches_edge_clustered_from_src(
     src,
     meta: RasterMeta,
     points: list[tuple[float, float]],
     patch_size: int,
-    max_block_pixels: int = 1048576,
-    max_overread_ratio: float = 12.0,
-    fallback_union_pixels: int = 262144,
-    fallback_union_overread_ratio: float = 6.0,
-) -> tuple[list[PatchExtraction], str, int, int]:
-    """Extract patches by caching internal GeoTIFF blocks when bounded.
+    max_union_pixels: int = 262144,
+    max_overread_ratio: float = 6.0,
+    tile_size: int | None = None,
+) -> tuple[list[PatchExtraction], dict[str, int]]:
+    """Extract patches using small spatial union windows.
 
-    Returns ``(patches, mode, read_calls, pixels_read)`` where mode is one of:
-    ``block`` for internal-block reads, ``batch`` for P4 union fallback, or
-    ``patch`` for exact per-patch fallback.
+    Unlike ``extract_patches_edge_batched_from_src``, this does not try to read
+    every point in a region/date/band through one large union. It bins nearby
+    patch centers into raster-sized tiles, reads one bounded union per bin, and
+    falls back to exact per-patch reads only for bins whose union would overread
+    too much.
     """
 
     specs = [_patch_window(src, meta, lon, lat, patch_size) for lon, lat in points]
+    stats = {
+        "read_calls": 0,
+        "batch_read_calls": 0,
+        "fallback_patch_read_calls": 0,
+        "pixels_read": 0,
+        "cluster_count": 0,
+        "batched_patch_count": 0,
+        "fallback_patch_count": 0,
+    }
     if not specs:
-        return [], "block", 0, 0
+        return [], stats
 
-    block_height, block_width = _block_shape(src)
-    exact_pixels = sum((spec.crop_right - spec.crop_left) * (spec.crop_bottom - spec.crop_top) for spec in specs)
-    needed_blocks: set[tuple[int, int]] = set()
-    blocks_by_spec: list[list[tuple[int, int]]] = []
-    for spec in specs:
-        block_row_start = spec.crop_top // block_height
-        block_row_end = (spec.crop_bottom - 1) // block_height
-        block_col_start = spec.crop_left // block_width
-        block_col_end = (spec.crop_right - 1) // block_width
-        spec_blocks = [
-            (block_row, block_col)
-            for block_row in range(block_row_start, block_row_end + 1)
-            for block_col in range(block_col_start, block_col_end + 1)
-        ]
-        blocks_by_spec.append(spec_blocks)
-        needed_blocks.update(spec_blocks)
+    tile = int(tile_size or _default_batch_tile_size(src, max_union_pixels, patch_size))
+    groups: dict[tuple[int, int], list[tuple[int, PatchWindow]]] = {}
+    for index, spec in enumerate(specs):
+        key = (spec.pixel_x // tile, spec.pixel_y // tile)
+        groups.setdefault(key, []).append((index, spec))
+    stats["cluster_count"] = len(groups)
 
-    block_pixels = 0
-    for block_row, block_col in needed_blocks:
-        _window, row_start, col_start, row_end, col_end = _block_window(src, block_row, block_col, block_height, block_width)
-        block_pixels += (row_end - row_start) * (col_end - col_start)
+    out: list[PatchExtraction | None] = [None] * len(specs)
+    for items in groups.values():
+        group_specs = [spec for _, spec in items]
+        union_left = min(spec.crop_left for spec in group_specs)
+        union_top = min(spec.crop_top for spec in group_specs)
+        union_right = max(spec.crop_right for spec in group_specs)
+        union_bottom = max(spec.crop_bottom for spec in group_specs)
+        union_pixels = (union_right - union_left) * (union_bottom - union_top)
+        exact_pixels = sum((spec.crop_right - spec.crop_left) * (spec.crop_bottom - spec.crop_top) for spec in group_specs)
+        use_union = len(items) > 1 and union_pixels <= max_union_pixels and union_pixels <= int(max_overread_ratio * max(exact_pixels, 1))
 
-    if block_pixels > max_block_pixels or block_pixels > int(max_overread_ratio * max(exact_pixels, 1)):
-        patches, used_batch, pixels_read = extract_patches_edge_batched_from_src(
-            src=src,
-            meta=meta,
-            points=points,
-            patch_size=patch_size,
-            max_union_pixels=fallback_union_pixels,
-            max_overread_ratio=fallback_union_overread_ratio,
-        )
-        mode = "batch" if used_batch else "patch"
-        read_calls = 1 if used_batch else len(patches)
-        return patches, mode, read_calls, int(pixels_read)
+        if use_union:
+            window = Window(union_left, union_top, union_right - union_left, union_bottom - union_top)
+            union = src.read(1, window=window, out_dtype="float32", masked=False)
+            union = np.asarray(union, dtype=np.float32)
+            stats["read_calls"] += 1
+            stats["batch_read_calls"] += 1
+            stats["pixels_read"] += int(union.size)
+            stats["batched_patch_count"] += len(items)
+            for index, spec in items:
+                r0 = spec.crop_top - union_top
+                r1 = spec.crop_bottom - union_top
+                c0 = spec.crop_left - union_left
+                c1 = spec.crop_right - union_left
+                out[index] = _patch_extraction_from_array(union[r0:r1, c0:c1], spec, patch_size)
+            continue
 
-    block_cache: dict[tuple[int, int], tuple[np.ndarray, int, int]] = {}
-    pixels_read = 0
-    for block_row, block_col in sorted(needed_blocks):
-        window, row_start, col_start, _row_end, _col_end = _block_window(src, block_row, block_col, block_height, block_width)
-        block = src.read(1, window=window, out_dtype="float32", masked=False)
-        block = np.asarray(block, dtype=np.float32)
-        block_cache[(block_row, block_col)] = (block, row_start, col_start)
-        pixels_read += int(block.size)
+        for index, spec in items:
+            window = Window(spec.crop_left, spec.crop_top, spec.crop_right - spec.crop_left, spec.crop_bottom - spec.crop_top)
+            patch = src.read(1, window=window, out_dtype="float32", masked=False)
+            patch = np.asarray(patch, dtype=np.float32)
+            stats["read_calls"] += 1
+            stats["fallback_patch_read_calls"] += 1
+            stats["fallback_patch_count"] += 1
+            stats["pixels_read"] += int(patch.size)
+            out[index] = _patch_extraction_from_array(patch, spec, patch_size)
 
-    out: list[PatchExtraction] = []
-    for spec, spec_blocks in zip(specs, blocks_by_spec):
-        crop_height = spec.crop_bottom - spec.crop_top
-        crop_width = spec.crop_right - spec.crop_left
-        crop = np.empty((crop_height, crop_width), dtype=np.float32)
-        for block_row, block_col in spec_blocks:
-            block, block_row_start, block_col_start = block_cache[(block_row, block_col)]
-            row_start = max(spec.crop_top, block_row_start)
-            col_start = max(spec.crop_left, block_col_start)
-            row_end = min(spec.crop_bottom, block_row_start + block.shape[0])
-            col_end = min(spec.crop_right, block_col_start + block.shape[1])
-            crop[row_start - spec.crop_top : row_end - spec.crop_top, col_start - spec.crop_left : col_end - spec.crop_left] = block[
-                row_start - block_row_start : row_end - block_row_start,
-                col_start - block_col_start : col_end - block_col_start,
-            ]
-        out.append(_patch_extraction_from_array(crop, spec, patch_size))
-
-    return out, "block", len(block_cache), int(pixels_read)
+    return [item for item in out if item is not None], stats
 
 
 def clean_patch_values(

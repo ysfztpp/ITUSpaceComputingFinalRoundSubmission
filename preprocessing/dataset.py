@@ -13,14 +13,7 @@ from .constants import BAND_ORDER, CROP_TYPE_ORDER, INVALID_FILL_VALUE, PATCH_SI
 from .filename import doy_from_timestamp
 from .inventory import audit_tiff_files, build_fast_file_index, build_region_catalog, select_file_index
 from .mapping import map_points_to_regions, unique_points
-from .raster_io import (
-    clean_patch_values,
-    extract_patch_edge_from_src,
-    extract_patches_edge_batched_from_src,
-    extract_patches_edge_block_cached_from_src,
-    raster_meta_from_src,
-    rasterio,
-)
+from .raster_io import clean_patch_values, extract_patch_edge_from_src, extract_patches_edge_clustered_from_src, raster_meta_from_src, rasterio
 
 
 def _json_default(value: Any) -> Any:
@@ -226,9 +219,6 @@ def build_patch_dataset(
     batch_raster_reads: bool = False,
     max_batch_union_pixels: int = 262144,
     max_batch_union_overread_ratio: float = 6.0,
-    block_raster_reads: bool = False,
-    max_block_pixels: int = 1048576,
-    max_block_overread_ratio: float = 12.0,
 ) -> dict[str, Any]:
     if mode not in {"train", "test"}:
         raise ValueError("mode must be 'train' or 'test'")
@@ -320,9 +310,11 @@ def build_patch_dataset(
     file_read_failure_count = 0
     raster_read_calls = 0
     raster_batch_read_calls = 0
-    raster_block_read_calls = 0
     raster_fallback_patch_read_calls = 0
     raster_pixels_read = 0
+    raster_batch_clusters = 0
+    raster_batched_patch_count = 0
+    raster_fallback_patch_count = 0
 
     points_by_region: dict[str, list[Any]] = defaultdict(list)
     for row in kept.itertuples(index=False):
@@ -370,48 +362,10 @@ def build_patch_dataset(
                 try:
                     meta = raster_meta_from_src(used_path, src)
                     row_extractions: list[tuple[Any, Any]] = []
-                    if block_raster_reads:
+                    if batch_raster_reads:
                         try:
                             point_coords = [(float(row.Longitude), float(row.Latitude)) for row in region_points]
-                            extracted_batch, read_mode, read_calls, pixels_read = extract_patches_edge_block_cached_from_src(
-                                src=src,
-                                meta=meta,
-                                points=point_coords,
-                                patch_size=patch_size,
-                                max_block_pixels=max_block_pixels,
-                                max_overread_ratio=max_block_overread_ratio,
-                                fallback_union_pixels=max_batch_union_pixels,
-                                fallback_union_overread_ratio=max_batch_union_overread_ratio,
-                            )
-                            raster_pixels_read += int(pixels_read)
-                            raster_read_calls += int(read_calls)
-                            if read_mode == "block":
-                                raster_block_read_calls += int(read_calls)
-                            elif read_mode == "batch":
-                                raster_batch_read_calls += int(read_calls)
-                            else:
-                                raster_fallback_patch_read_calls += int(read_calls)
-                            row_extractions = list(zip(region_points, extracted_batch))
-                        except Exception as exc:  # pragma: no cover - defensive logging
-                            for row in region_points:
-                                extraction_error_rows.append(
-                                    {
-                                        "point_id": row.point_id,
-                                        "sample_index": int(row.sample_index),
-                                        "Longitude": float(row.Longitude),
-                                        "Latitude": float(row.Latitude),
-                                        "region_id": region_id,
-                                        "start_norm": start_norm,
-                                        "band_id": band_id,
-                                        "selected_file_index": selected_file_index,
-                                        "path": str(used_path),
-                                        "error": str(exc),
-                                    }
-                                )
-                    elif batch_raster_reads:
-                        try:
-                            point_coords = [(float(row.Longitude), float(row.Latitude)) for row in region_points]
-                            extracted_batch, used_batch, pixels_read = extract_patches_edge_batched_from_src(
+                            extracted_batch, batch_stats = extract_patches_edge_clustered_from_src(
                                 src=src,
                                 meta=meta,
                                 points=point_coords,
@@ -419,13 +373,13 @@ def build_patch_dataset(
                                 max_union_pixels=max_batch_union_pixels,
                                 max_overread_ratio=max_batch_union_overread_ratio,
                             )
-                            raster_pixels_read += int(pixels_read)
-                            if used_batch:
-                                raster_read_calls += 1
-                                raster_batch_read_calls += 1
-                            else:
-                                raster_read_calls += len(extracted_batch)
-                                raster_fallback_patch_read_calls += len(extracted_batch)
+                            raster_pixels_read += int(batch_stats["pixels_read"])
+                            raster_read_calls += int(batch_stats["read_calls"])
+                            raster_batch_read_calls += int(batch_stats["batch_read_calls"])
+                            raster_fallback_patch_read_calls += int(batch_stats["fallback_patch_read_calls"])
+                            raster_batch_clusters += int(batch_stats["cluster_count"])
+                            raster_batched_patch_count += int(batch_stats["batched_patch_count"])
+                            raster_fallback_patch_count += int(batch_stats["fallback_patch_count"])
                             row_extractions = list(zip(region_points, extracted_batch))
                         except Exception as exc:  # pragma: no cover - defensive logging
                             for row in region_points:
@@ -664,14 +618,13 @@ def build_patch_dataset(
         "batch_raster_reads": bool(batch_raster_reads),
         "max_batch_union_pixels": int(max_batch_union_pixels),
         "max_batch_union_overread_ratio": float(max_batch_union_overread_ratio),
-        "block_raster_reads": bool(block_raster_reads),
-        "max_block_pixels": int(max_block_pixels),
-        "max_block_overread_ratio": float(max_block_overread_ratio),
         "raster_read_calls": int(raster_read_calls),
         "raster_batch_read_calls": int(raster_batch_read_calls),
-        "raster_block_read_calls": int(raster_block_read_calls),
         "raster_fallback_patch_read_calls": int(raster_fallback_patch_read_calls),
         "raster_pixels_read": int(raster_pixels_read),
+        "raster_batch_clusters": int(raster_batch_clusters),
+        "raster_batched_patch_count": int(raster_batched_patch_count),
+        "raster_fallback_patch_count": int(raster_fallback_patch_count),
     }
     timings["build_report_seconds"] = time.perf_counter() - phase_start
     timings["total_build_patch_dataset_seconds"] = time.perf_counter() - total_start

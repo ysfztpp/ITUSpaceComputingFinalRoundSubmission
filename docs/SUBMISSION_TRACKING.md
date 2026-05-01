@@ -477,6 +477,7 @@ Submission runtime notes:
 - Keep in-memory patches and no patch NPZ write.
 - Use GDAL cache `2048`.
 - Preserve delay metrics in logs: `timing_seconds`, `patch_report`, and `xgb_stage_seconds`.
+- P5 advanced update: region-wide union reads were too conservative on the platform test set (`raster_batch_read_calls=0`), so extraction now clusters nearby patch centers into bounded tile/union reads and logs `raster_batch_clusters`, `raster_batched_patch_count`, and `raster_fallback_patch_count`.
 
 Risk:
 
