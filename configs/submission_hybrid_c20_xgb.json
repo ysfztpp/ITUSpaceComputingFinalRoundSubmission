@@ -1,0 +1,48 @@
+{
+  "input_root": "/input",
+  "output_json": "/output/result.json",
+  "checkpoint": "checkpoints/c20_fourier_model.pt",
+  "crop_checkpoint": "checkpoints/c20_fourier_model.pt",
+  "stage_checkpoint": "checkpoints/c20_fourier_model.pt",
+  "xgb_stage_model": "artifacts/models/xgboost_full_data_final/xgboost_full_data_final.pkl",
+  "normalization_json": "artifacts/normalization/train_patch_band_stats.json",
+  "work_dir": "/tmp/kybelix_submission_work",
+  "batch_size": 64,
+  "device": "auto",
+  "fast_inventory": true,
+  "use_gdal_env": true,
+  "gdal_env": {
+    "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+    "GDAL_READDIR_LIMIT_ON_OPEN": 0,
+    "GDAL_CACHEMAX": 2048,
+    "VSI_CACHE": "TRUE",
+    "VSI_CACHE_SIZE": 33554432
+  },
+  "use_in_memory_patches": true,
+  "write_patch_npz": false,
+  "compressed_patch_npz": false,
+  "batch_raster_reads": true,
+  "max_batch_union_pixels": 262144,
+  "max_batch_union_overread_ratio": 6.0,
+  "use_crop_consistency": true,
+  "preprocessing": {
+    "patch_size": 15,
+    "bands": [
+      "B01",
+      "B02",
+      "B03",
+      "B04",
+      "B05",
+      "B06",
+      "B07",
+      "B08",
+      "B8A",
+      "B09",
+      "B11",
+      "B12"
+    ],
+    "valid_min_exclusive": 0.0,
+    "valid_max_inclusive": 2.0,
+    "invalid_fill_value": 0.0
+  }
+}

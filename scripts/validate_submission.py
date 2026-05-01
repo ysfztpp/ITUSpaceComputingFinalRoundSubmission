@@ -126,6 +126,11 @@ def main() -> None:
         checkpoint_paths["stage_checkpoint"] = resolve_path(config["stage_checkpoint"])
     for index, ensemble_value in enumerate(config.get("ensemble_checkpoints", [])):
         checkpoint_paths[f"ensemble_checkpoints[{index}]"] = resolve_path(ensemble_value)
+    xgb_stage_model = config.get("xgb_stage_model")
+    if xgb_stage_model:
+        xgb_stage_path = resolve_path(xgb_stage_model)
+        if not xgb_stage_path.exists():
+            fail(f"missing XGBoost stage model: {xgb_stage_path}")
 
     inspected: dict[str, dict[str, Any]] = {}
     seen: dict[Path, dict[str, Any]] = {}
@@ -148,6 +153,7 @@ def main() -> None:
                 "model_type": inspected["checkpoint"]["model_type"],
                 "model_config": inspected["checkpoint"]["model_config"],
                 "checked_checkpoints": inspected,
+                "xgb_stage_model": str(resolve_path(xgb_stage_model)) if xgb_stage_model else None,
                 "output_json": str(output_json),
             },
             indent=2,

@@ -446,3 +446,38 @@ Possible C03-focused improvement directions:
 - C03 robustness tests around query-date shifts, missing bands, valid-mask behavior, and duplicate-key handling.
 
 Avoid making hidden-test-driven edits from a single score unless we can explain the mechanism and verify it locally.
+
+## Final Hybrid C20 Fourier + Full-Data XGBoost
+
+Prepared after the C34 reduced-band validation showed speed potential but weaker robustness than the full-band models.
+
+Packaged components:
+
+- Neural crop source: `checkpoints/c20_fourier_model.pt`
+- XGBoost rice-stage source: `artifacts/models/xgboost_full_data_final/xgboost_full_data_final.pkl`
+- Submission config mirror: `configs/submission_hybrid_c20_xgb.json`
+
+Full-data XGBoost training summary from Colab:
+
+- Total rows: `5446`
+- Rice-stage rows: `2569`
+- Crop estimators: `1305`
+- Stage estimators: `555`
+- Saved pack size: about `6.2 MB`
+
+Validation evidence before full-data retraining:
+
+- Pure XGBoost validation score: `0.980516`
+- XGBoost rice-stage macro F1: `0.996138`
+- Hybrid Fourier/neural crop plus XGBoost stage validation score: `0.997683`
+
+Submission runtime notes:
+
+- Keep P5 raster-window batching enabled.
+- Keep in-memory patches and no patch NPZ write.
+- Use GDAL cache `2048`.
+- Preserve delay metrics in logs: `timing_seconds`, `patch_report`, and `xgb_stage_seconds`.
+
+Risk:
+
+- XGBoost stage is very strong on the validation split but highly query-date dependent under synthetic query shifts. Use this as the high-upside submission; keep a pure neural fallback for the second submission chance if the hidden score collapses.
