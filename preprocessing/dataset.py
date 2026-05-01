@@ -53,6 +53,131 @@ def _open_first_readable(candidate_paths: list[Path]):
     return None, None, attempts
 
 
+def _extract_one_tiff(
+    *,
+    region_id: str,
+    time_index: int,
+    band_index: int,
+    band_id: str,
+    start_norm: str,
+    region_points: list,
+    point_coords: list,
+    candidate_lookup: dict,
+    patches: np.ndarray,
+    valid_pixel_mask: np.ndarray,
+    band_mask: np.ndarray,
+    border_margin: np.ndarray,
+    center_clamped: np.ndarray,
+    source_file_index: np.ndarray,
+    band_valid_ratio: np.ndarray,
+    patch_size: int,
+    valid_min_exclusive: float,
+    valid_max_inclusive: float,
+    invalid_fill_value: float,
+    batch_raster_reads: bool,
+    max_batch_union_pixels: int,
+    max_batch_union_overread_ratio: float,
+) -> dict:
+    out: dict = {
+        "file_read_failures": 0,
+        "read_calls": 0,
+        "batch_read_calls": 0,
+        "fallback_patch_read_calls": 0,
+        "pixels_read": 0,
+        "batch_clusters": 0,
+        "batched_patch_count": 0,
+        "fallback_patch_count": 0,
+        "extraction_errors": [],
+    }
+    selected = candidate_lookup.get((region_id, start_norm, band_id))
+    if selected is None:
+        return out
+    selected_file_index, candidate_paths = selected
+    src, used_path, attempts = _open_first_readable(candidate_paths)
+    out["file_read_failures"] = sum(1 for a in attempts if a["attempt_status"] == "failed")
+    if src is None or used_path is None:
+        return out
+    try:
+        meta = raster_meta_from_src(used_path, src)
+        row_extractions: list = []
+        if batch_raster_reads:
+            try:
+                extracted_batch, batch_s = extract_patches_edge_clustered_from_src(
+                    src=src,
+                    meta=meta,
+                    points=point_coords,
+                    patch_size=patch_size,
+                    max_union_pixels=max_batch_union_pixels,
+                    max_overread_ratio=max_batch_union_overread_ratio,
+                )
+                out["pixels_read"] += int(batch_s["pixels_read"])
+                out["read_calls"] += int(batch_s["read_calls"])
+                out["batch_read_calls"] += int(batch_s["batch_read_calls"])
+                out["fallback_patch_read_calls"] += int(batch_s["fallback_patch_read_calls"])
+                out["batch_clusters"] += int(batch_s["cluster_count"])
+                out["batched_patch_count"] += int(batch_s["batched_patch_count"])
+                out["fallback_patch_count"] += int(batch_s["fallback_patch_count"])
+                row_extractions = list(zip(region_points, extracted_batch))
+            except Exception as exc:
+                for row in region_points:
+                    out["extraction_errors"].append({
+                        "point_id": row.point_id,
+                        "sample_index": int(row.sample_index),
+                        "Longitude": float(row.Longitude),
+                        "Latitude": float(row.Latitude),
+                        "region_id": region_id,
+                        "start_norm": start_norm,
+                        "band_id": band_id,
+                        "selected_file_index": selected_file_index,
+                        "path": str(used_path),
+                        "error": str(exc),
+                    })
+        else:
+            for row in region_points:
+                try:
+                    extracted = extract_patch_edge_from_src(
+                        src=src,
+                        meta=meta,
+                        lon=float(row.Longitude),
+                        lat=float(row.Latitude),
+                        patch_size=patch_size,
+                    )
+                    out["read_calls"] += 1
+                    out["pixels_read"] += int(extracted.patch.size)
+                    row_extractions.append((row, extracted))
+                except Exception as exc:
+                    out["extraction_errors"].append({
+                        "point_id": row.point_id,
+                        "sample_index": int(row.sample_index),
+                        "Longitude": float(row.Longitude),
+                        "Latitude": float(row.Latitude),
+                        "region_id": region_id,
+                        "start_norm": start_norm,
+                        "band_id": band_id,
+                        "selected_file_index": selected_file_index,
+                        "path": str(used_path),
+                        "error": str(exc),
+                    })
+        for row, extracted in row_extractions:
+            sample_index = int(row.sample_index)
+            cleaned, valid = clean_patch_values(
+                extracted.patch,
+                min_exclusive=valid_min_exclusive,
+                max_inclusive=valid_max_inclusive,
+                fill_value=invalid_fill_value,
+            )
+            patches[sample_index, time_index, band_index] = cleaned
+            valid_pixel_mask[sample_index, time_index, band_index] = valid
+            band_mask[sample_index, time_index, band_index] = True
+            border_margin[sample_index, time_index, band_index] = extracted.border_margin_pixels
+            center_clamped[sample_index, time_index, band_index] = extracted.center_clamped
+            source_file_index[sample_index, time_index, band_index] = selected_file_index
+            band_valid_ratio[sample_index, time_index, band_index] = float(valid.mean())
+    finally:
+        src.close()
+    return out
+
+
 def _attach_training_labels(metadata: pd.DataFrame, labels_df: pd.DataFrame) -> pd.DataFrame:
     labels = labels_df.copy()
     labels["phenophase_doy"] = pd.to_datetime(labels["phenophase_date"], errors="coerce").dt.dayofyear
@@ -219,6 +344,7 @@ def build_patch_dataset(
     batch_raster_reads: bool = False,
     max_batch_union_pixels: int = 262144,
     max_batch_union_overread_ratio: float = 6.0,
+    num_io_workers: int = 1,
 ) -> dict[str, Any]:
     if mode not in {"train", "test"}:
         raise ValueError("mode must be 'train' or 'test'")
@@ -321,28 +447,28 @@ def build_patch_dataset(
         points_by_region[str(row.resolved_region_id)].append(row)
 
     phase_start = time.perf_counter()
-    for region_id in sorted(points_by_region):
-        region_points = points_by_region[region_id]
-        dates = region_dates.get(region_id, [])
-        kept.loc[kept["resolved_region_id"] == region_id, "resolved_time_steps"] = len(dates)
+    if write_reports:
+        for region_id in sorted(points_by_region):
+            region_points = points_by_region[region_id]
+            dates = region_dates.get(region_id, [])
+            kept.loc[kept["resolved_region_id"] == region_id, "resolved_time_steps"] = len(dates)
 
-        for row in region_points:
-            sample_index = int(row.sample_index)
+            for row in region_points:
+                sample_index = int(row.sample_index)
+                for time_index, start_norm in enumerate(dates):
+                    time_mask[sample_index, time_index] = True
+                    time_doy[sample_index, time_index] = doy_from_timestamp(start_norm)
+                    time_dates[sample_index, time_index] = start_norm[:10]
+
             for time_index, start_norm in enumerate(dates):
-                time_mask[sample_index, time_index] = True
-                time_doy[sample_index, time_index] = doy_from_timestamp(start_norm)
-                time_dates[sample_index, time_index] = start_norm[:10]
-
-        for time_index, start_norm in enumerate(dates):
-            for band_index, band_id in enumerate(band_order):
-                selected = candidate_lookup.get((region_id, start_norm, band_id))
-                if selected is None:
-                    continue
-                selected_file_index, candidate_paths = selected
-                src, used_path, attempts = _open_first_readable(candidate_paths)
-                failed_attempts = sum(1 for attempt in attempts if attempt["attempt_status"] == "failed")
-                file_read_failure_count += failed_attempts
-                if write_reports:
+                for band_index, band_id in enumerate(band_order):
+                    selected = candidate_lookup.get((region_id, start_norm, band_id))
+                    if selected is None:
+                        continue
+                    selected_file_index, candidate_paths = selected
+                    src, used_path, attempts = _open_first_readable(candidate_paths)
+                    failed_attempts = sum(1 for attempt in attempts if attempt["attempt_status"] == "failed")
+                    file_read_failure_count += failed_attempts
                     for attempt in attempts:
                         file_attempt_rows.append(
                             {
@@ -356,92 +482,89 @@ def build_patch_dataset(
                                 "attempt_error": attempt["attempt_error"],
                             }
                         )
-                if src is None or used_path is None:
-                    continue
-
-                try:
-                    meta = raster_meta_from_src(used_path, src)
-                    row_extractions: list[tuple[Any, Any]] = []
-                    if batch_raster_reads:
-                        try:
-                            point_coords = [(float(row.Longitude), float(row.Latitude)) for row in region_points]
-                            extracted_batch, batch_stats = extract_patches_edge_clustered_from_src(
-                                src=src,
-                                meta=meta,
-                                points=point_coords,
-                                patch_size=patch_size,
-                                max_union_pixels=max_batch_union_pixels,
-                                max_overread_ratio=max_batch_union_overread_ratio,
-                            )
-                            raster_pixels_read += int(batch_stats["pixels_read"])
-                            raster_read_calls += int(batch_stats["read_calls"])
-                            raster_batch_read_calls += int(batch_stats["batch_read_calls"])
-                            raster_fallback_patch_read_calls += int(batch_stats["fallback_patch_read_calls"])
-                            raster_batch_clusters += int(batch_stats["cluster_count"])
-                            raster_batched_patch_count += int(batch_stats["batched_patch_count"])
-                            raster_fallback_patch_count += int(batch_stats["fallback_patch_count"])
-                            row_extractions = list(zip(region_points, extracted_batch))
-                        except Exception as exc:  # pragma: no cover - defensive logging
-                            for row in region_points:
-                                extraction_error_rows.append(
-                                    {
-                                        "point_id": row.point_id,
-                                        "sample_index": int(row.sample_index),
-                                        "Longitude": float(row.Longitude),
-                                        "Latitude": float(row.Latitude),
-                                        "region_id": region_id,
-                                        "start_norm": start_norm,
-                                        "band_id": band_id,
-                                        "selected_file_index": selected_file_index,
-                                        "path": str(used_path),
-                                        "error": str(exc),
-                                    }
-                                )
-                    else:
-                        for row in region_points:
+                    if src is None or used_path is None:
+                        continue
+                    try:
+                        meta = raster_meta_from_src(used_path, src)
+                        row_extractions: list[tuple[Any, Any]] = []
+                        if batch_raster_reads:
                             try:
-                                extracted = extract_patch_edge_from_src(
+                                point_coords = [(float(row.Longitude), float(row.Latitude)) for row in region_points]
+                                extracted_batch, batch_stats = extract_patches_edge_clustered_from_src(
                                     src=src,
                                     meta=meta,
-                                    lon=float(row.Longitude),
-                                    lat=float(row.Latitude),
+                                    points=point_coords,
                                     patch_size=patch_size,
+                                    max_union_pixels=max_batch_union_pixels,
+                                    max_overread_ratio=max_batch_union_overread_ratio,
                                 )
-                                raster_read_calls += 1
-                                raster_pixels_read += int(extracted.patch.size)
-                                row_extractions.append((row, extracted))
-                            except Exception as exc:  # pragma: no cover - defensive logging
-                                extraction_error_rows.append(
-                                    {
-                                        "point_id": row.point_id,
-                                        "sample_index": int(row.sample_index),
-                                        "Longitude": float(row.Longitude),
-                                        "Latitude": float(row.Latitude),
-                                        "region_id": region_id,
-                                        "start_norm": start_norm,
-                                        "band_id": band_id,
-                                        "selected_file_index": selected_file_index,
-                                        "path": str(used_path),
-                                        "error": str(exc),
-                                    }
-                                )
-
-                    for row, extracted in row_extractions:
-                        sample_index = int(row.sample_index)
-                        cleaned, valid = clean_patch_values(
-                            extracted.patch,
-                            min_exclusive=valid_min_exclusive,
-                            max_inclusive=valid_max_inclusive,
-                            fill_value=invalid_fill_value,
-                        )
-                        patches[sample_index, time_index, band_index] = cleaned
-                        valid_pixel_mask[sample_index, time_index, band_index] = valid
-                        band_mask[sample_index, time_index, band_index] = True
-                        border_margin[sample_index, time_index, band_index] = extracted.border_margin_pixels
-                        center_clamped[sample_index, time_index, band_index] = extracted.center_clamped
-                        source_file_index[sample_index, time_index, band_index] = selected_file_index
-                        band_valid_ratio[sample_index, time_index, band_index] = float(valid.mean())
-                        if write_reports:
+                                raster_pixels_read += int(batch_stats["pixels_read"])
+                                raster_read_calls += int(batch_stats["read_calls"])
+                                raster_batch_read_calls += int(batch_stats["batch_read_calls"])
+                                raster_fallback_patch_read_calls += int(batch_stats["fallback_patch_read_calls"])
+                                raster_batch_clusters += int(batch_stats["cluster_count"])
+                                raster_batched_patch_count += int(batch_stats["batched_patch_count"])
+                                raster_fallback_patch_count += int(batch_stats["fallback_patch_count"])
+                                row_extractions = list(zip(region_points, extracted_batch))
+                            except Exception as exc:
+                                for row in region_points:
+                                    extraction_error_rows.append(
+                                        {
+                                            "point_id": row.point_id,
+                                            "sample_index": int(row.sample_index),
+                                            "Longitude": float(row.Longitude),
+                                            "Latitude": float(row.Latitude),
+                                            "region_id": region_id,
+                                            "start_norm": start_norm,
+                                            "band_id": band_id,
+                                            "selected_file_index": selected_file_index,
+                                            "path": str(used_path),
+                                            "error": str(exc),
+                                        }
+                                    )
+                        else:
+                            for row in region_points:
+                                try:
+                                    extracted = extract_patch_edge_from_src(
+                                        src=src,
+                                        meta=meta,
+                                        lon=float(row.Longitude),
+                                        lat=float(row.Latitude),
+                                        patch_size=patch_size,
+                                    )
+                                    raster_read_calls += 1
+                                    raster_pixels_read += int(extracted.patch.size)
+                                    row_extractions.append((row, extracted))
+                                except Exception as exc:
+                                    extraction_error_rows.append(
+                                        {
+                                            "point_id": row.point_id,
+                                            "sample_index": int(row.sample_index),
+                                            "Longitude": float(row.Longitude),
+                                            "Latitude": float(row.Latitude),
+                                            "region_id": region_id,
+                                            "start_norm": start_norm,
+                                            "band_id": band_id,
+                                            "selected_file_index": selected_file_index,
+                                            "path": str(used_path),
+                                            "error": str(exc),
+                                        }
+                                    )
+                        for row, extracted in row_extractions:
+                            sample_index = int(row.sample_index)
+                            cleaned, valid = clean_patch_values(
+                                extracted.patch,
+                                min_exclusive=valid_min_exclusive,
+                                max_inclusive=valid_max_inclusive,
+                                fill_value=invalid_fill_value,
+                            )
+                            patches[sample_index, time_index, band_index] = cleaned
+                            valid_pixel_mask[sample_index, time_index, band_index] = valid
+                            band_mask[sample_index, time_index, band_index] = True
+                            border_margin[sample_index, time_index, band_index] = extracted.border_margin_pixels
+                            center_clamped[sample_index, time_index, band_index] = extracted.center_clamped
+                            source_file_index[sample_index, time_index, band_index] = selected_file_index
+                            band_valid_ratio[sample_index, time_index, band_index] = float(valid.mean())
                             _record_sample_candidates(
                                 reservoirs=reservoirs,
                                 seen_counts=seen_counts,
@@ -461,8 +584,75 @@ def build_patch_dataset(
                                 border_margin_pixels=extracted.border_margin_pixels,
                                 center_clamped=extracted.center_clamped,
                             )
-                finally:
-                    src.close()
+                    finally:
+                        src.close()
+    else:
+        task_list: list[dict] = []
+        for region_id in sorted(points_by_region):
+            region_points = points_by_region[region_id]
+            dates = region_dates.get(region_id, [])
+            kept.loc[kept["resolved_region_id"] == region_id, "resolved_time_steps"] = len(dates)
+            point_coords = [(float(row.Longitude), float(row.Latitude)) for row in region_points]
+            for row in region_points:
+                sample_index = int(row.sample_index)
+                for time_index, start_norm in enumerate(dates):
+                    time_mask[sample_index, time_index] = True
+                    time_doy[sample_index, time_index] = doy_from_timestamp(start_norm)
+                    time_dates[sample_index, time_index] = start_norm[:10]
+            for time_index, start_norm in enumerate(dates):
+                for band_index, band_id in enumerate(band_order):
+                    task_list.append(dict(
+                        region_id=region_id,
+                        time_index=time_index,
+                        band_index=band_index,
+                        band_id=band_id,
+                        start_norm=start_norm,
+                        region_points=region_points,
+                        point_coords=point_coords,
+                    ))
+
+        shared_kwargs: dict = dict(
+            candidate_lookup=candidate_lookup,
+            patches=patches,
+            valid_pixel_mask=valid_pixel_mask,
+            band_mask=band_mask,
+            border_margin=border_margin,
+            center_clamped=center_clamped,
+            source_file_index=source_file_index,
+            band_valid_ratio=band_valid_ratio,
+            patch_size=patch_size,
+            valid_min_exclusive=valid_min_exclusive,
+            valid_max_inclusive=valid_max_inclusive,
+            invalid_fill_value=invalid_fill_value,
+            batch_raster_reads=batch_raster_reads,
+            max_batch_union_pixels=max_batch_union_pixels,
+            max_batch_union_overread_ratio=max_batch_union_overread_ratio,
+        )
+
+        def _accumulate(r: dict) -> None:
+            nonlocal file_read_failure_count, raster_read_calls, raster_batch_read_calls
+            nonlocal raster_fallback_patch_read_calls, raster_pixels_read
+            nonlocal raster_batch_clusters, raster_batched_patch_count, raster_fallback_patch_count
+            file_read_failure_count += r["file_read_failures"]
+            raster_read_calls += r["read_calls"]
+            raster_batch_read_calls += r["batch_read_calls"]
+            raster_fallback_patch_read_calls += r["fallback_patch_read_calls"]
+            raster_pixels_read += r["pixels_read"]
+            raster_batch_clusters += r["batch_clusters"]
+            raster_batched_patch_count += r["batched_patch_count"]
+            raster_fallback_patch_count += r["fallback_patch_count"]
+            extraction_error_rows.extend(r["extraction_errors"])
+
+        _w = max(1, min(int(num_io_workers), len(task_list))) if task_list else 1
+        if _w > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=_w) as executor:
+                futures = [executor.submit(_extract_one_tiff, **task, **shared_kwargs) for task in task_list]
+                for future in futures:
+                    _accumulate(future.result())
+        else:
+            for task in task_list:
+                _accumulate(_extract_one_tiff(**task, **shared_kwargs))
     timings["extract_raster_patches_seconds"] = time.perf_counter() - phase_start
 
     phase_start = time.perf_counter()
@@ -625,6 +815,7 @@ def build_patch_dataset(
         "raster_batch_clusters": int(raster_batch_clusters),
         "raster_batched_patch_count": int(raster_batched_patch_count),
         "raster_fallback_patch_count": int(raster_fallback_patch_count),
+        "num_io_workers": int(num_io_workers),
     }
     timings["build_report_seconds"] = time.perf_counter() - phase_start
     timings["total_build_patch_dataset_seconds"] = time.perf_counter() - total_start

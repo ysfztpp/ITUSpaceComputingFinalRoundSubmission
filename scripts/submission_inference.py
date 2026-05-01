@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import pickle
 import sys
 import time
 from pathlib import Path
@@ -15,7 +14,6 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from data.aux_features import compute_aux_features
 from data.transforms import NpzPatchNormalizer
 from models.model_factory import build_model, build_model_config, normalize_model_type
 from preprocessing.constants import BAND_ORDER, INVALID_FILL_VALUE, PATCH_SIZE
@@ -223,80 +221,6 @@ def prepare_patches(arrays: dict[str, np.ndarray], indices: np.ndarray, normaliz
     return patches.astype(np.float32, copy=False)
 
 
-def _xgb_band_time_medians(patches: np.ndarray, valid_mask: np.ndarray, time_mask: np.ndarray) -> np.ndarray:
-    timesteps, bands = patches.shape[:2]
-    out = np.zeros((timesteps, bands), dtype=np.float32)
-    for t in range(timesteps):
-        if not bool(time_mask[t]):
-            continue
-        for b in range(bands):
-            valid = valid_mask[t, b].astype(bool)
-            if valid.any():
-                out[t, b] = float(np.median(patches[t, b][valid]))
-    return out
-
-
-def build_xgb_feature_rows(arrays: dict[str, np.ndarray], query_rows: pd.DataFrame, feature_config: dict[str, Any]) -> np.ndarray:
-    bands = arrays.get("bands", np.asarray(BAND_ORDER)).astype(str).tolist()
-    disabled = {str(band) for band in feature_config.get("disabled_bands", [])}
-    enabled_band_indices = [i for i, band in enumerate(bands) if band not in disabled]
-    max_timesteps = int(feature_config.get("max_timesteps", arrays["patches"].shape[1]))
-    feature_set = str(feature_config.get("aux_feature_set", "phenology"))
-
-    rows: list[np.ndarray] = []
-    for row in query_rows.reset_index(drop=True).itertuples(index=False):
-        sample_index = int(row.sample_index)
-        query_doy = float(row.query_doy)
-        patches = arrays["patches"][sample_index].astype(np.float32, copy=False)
-        valid = arrays["valid_pixel_mask"][sample_index].astype(bool, copy=False)
-        time_mask = arrays["time_mask"][sample_index].astype(bool, copy=False)
-        time_doy = arrays["time_doy"][sample_index].astype(np.float32, copy=False)
-
-        available_steps = min(max_timesteps, patches.shape[0])
-        band_count = len(enabled_band_indices)
-        medians = np.zeros((max_timesteps, band_count), dtype=np.float32)
-        valid_ratio = np.zeros((max_timesteps, band_count), dtype=np.float32)
-        time_doy_features = np.zeros(max_timesteps, dtype=np.float32)
-        time_mask_features = np.zeros(max_timesteps, dtype=np.float32)
-        if available_steps > 0:
-            med = _xgb_band_time_medians(patches, valid, time_mask)[:available_steps, enabled_band_indices]
-            medians[:available_steps] = med
-            valid_ratio[:available_steps] = valid[:available_steps, enabled_band_indices].mean(axis=(2, 3)).astype(np.float32)
-            time_doy_features[:available_steps] = (time_doy[:available_steps] / 366.0).astype(np.float32)
-            time_mask_features[:available_steps] = time_mask[:available_steps].astype(np.float32)
-
-        time_features = np.concatenate(
-            [
-                medians.reshape(-1),
-                valid_ratio.reshape(-1),
-                time_doy_features,
-                time_mask_features,
-            ]
-        )
-        aux = compute_aux_features(
-            patches,
-            valid,
-            time_mask,
-            time_doy,
-            query_doy,
-            bands,
-            feature_set=feature_set,
-        )
-        rows.append(np.concatenate([time_features, aux.astype(np.float32, copy=False), np.asarray([query_doy / 366.0], dtype=np.float32)]))
-    return np.stack(rows).astype(np.float32, copy=False)
-
-
-def load_xgb_stage_model(path: Path) -> tuple[Any, dict[str, Any]]:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing XGBoost model: {path}")
-    with path.open("rb") as f:
-        pack = pickle.load(f)
-    if "stage_model" not in pack:
-        raise ValueError(f"XGBoost pack {path} is missing stage_model")
-    feature_config = pack.get("config") or pack.get("feature_config")
-    if not isinstance(feature_config, dict):
-        raise ValueError(f"XGBoost pack {path} is missing feature config")
-    return pack["stage_model"], feature_config
 
 
 def _apply_relative_doy(
@@ -479,6 +403,7 @@ def run_inference(config: dict[str, Any]) -> dict[str, Any]:
             batch_raster_reads=bool(config.get("batch_raster_reads", False)),
             max_batch_union_pixels=int(config.get("max_batch_union_pixels", 262144)),
             max_batch_union_overread_ratio=float(config.get("max_batch_union_overread_ratio", 6.0)),
+            num_io_workers=int(config.get("num_io_workers", 1)),
         )
     timings["patch_extraction_seconds"] = time.perf_counter() - patch_start
 
@@ -486,17 +411,12 @@ def run_inference(config: dict[str, Any]) -> dict[str, Any]:
     default_checkpoint = resolve_path(config.get("checkpoint", "checkpoints/model.pt"))
     crop_checkpoint = resolve_path(config.get("crop_checkpoint", default_checkpoint))
     stage_checkpoint = resolve_path(config.get("stage_checkpoint", default_checkpoint))
-    xgb_stage_path = resolve_path(config["xgb_stage_model"]) if config.get("xgb_stage_model") else None
     model_load_start = time.perf_counter()
     crop_model = load_model(crop_checkpoint, device)
     if stage_checkpoint.resolve() == crop_checkpoint.resolve():
         stage_model = crop_model
     else:
         stage_model = load_model(stage_checkpoint, device)
-    xgb_stage_model = None
-    xgb_feature_config = None
-    if xgb_stage_path is not None:
-        xgb_stage_model, xgb_feature_config = load_xgb_stage_model(xgb_stage_path)
 
     # Optional ensemble: extra checkpoints whose logits are averaged in.
     ensemble_paths = [resolve_path(p) for p in config.get("ensemble_checkpoints", [])]
@@ -604,17 +524,6 @@ def run_inference(config: dict[str, Any]) -> dict[str, Any]:
         torch.from_numpy(query_rows["query_doy"].to_numpy(dtype=np.float32)),
         mode=stage_postprocess,
     ).numpy()
-    xgb_stage_seconds = 0.0
-    xgb_stage_rows = 0
-    if xgb_stage_model is not None and xgb_feature_config is not None:
-        xgb_start = time.perf_counter()
-        xgb_features = build_xgb_feature_rows(arrays, query_rows, xgb_feature_config)
-        xgb_pred = xgb_stage_model.predict(xgb_features).astype(np.int64, copy=False)
-        rice_crop_id = CROP_TYPE_NAMES.index("rice")
-        rice_rows = crop_pred == rice_crop_id
-        stage_pred[rice_rows] = xgb_pred[rice_rows]
-        xgb_stage_rows = int(rice_rows.sum())
-        xgb_stage_seconds = time.perf_counter() - xgb_start
     # Override with point-level DOY bijection: sort all N queries for each point
     # by DOY and assign the first N stages in biological order. Works for any N.
     if use_bijection:
@@ -627,7 +536,6 @@ def run_inference(config: dict[str, Any]) -> dict[str, Any]:
         stage_logits=stage_logits,
     )
     timings["postprocess_seconds"] = time.perf_counter() - postprocess_start
-    timings["xgb_stage_seconds"] = xgb_stage_seconds
     write_start = time.perf_counter()
     result_stats = write_result(query_rows, crop_pred, stage_pred, output_json)
     timings["write_result_seconds"] = time.perf_counter() - write_start
@@ -648,8 +556,6 @@ def run_inference(config: dict[str, Any]) -> dict[str, Any]:
         "torch_cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "crop_checkpoint": str(crop_checkpoint),
         "stage_checkpoint": str(stage_checkpoint),
-        "xgb_stage_model": str(xgb_stage_path) if xgb_stage_path is not None else None,
-        "xgb_stage_override_rows": int(xgb_stage_rows),
         "ensemble_checkpoints": [str(p) for p in ensemble_paths],
         "use_gdal_env": bool(config.get("use_gdal_env", False)),
         "gdal_env": _gdal_env_options(config) if bool(config.get("use_gdal_env", False)) else {},

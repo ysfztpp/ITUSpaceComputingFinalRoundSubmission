@@ -26,8 +26,17 @@ SUBMISSION_OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 SUBMISSION_OUTPUT_JSON="${SUBMISSION_OUTPUT_DIR}/result.json"
 SUBMISSION_WORK_DIR="${WORK_DIR:-/tmp/kybelix_submission_work}"
 SUBMISSION_CONFIG="/tmp/kybelix_submission_config.json"
-SUBMISSION_CANDIDATE="${CANDIDATE:-c03}"
+SUBMISSION_CANDIDATE="${CANDIDATE:-p6}"
 case "${SUBMISSION_CANDIDATE}" in
+  p6)
+    if [ -z "${SUBMISSION_SOURCE_CONFIG:-}" ]; then
+      if [ -f "configs/submission_c03_p6.json" ]; then
+        SUBMISSION_SOURCE_CONFIG="configs/submission_c03_p6.json"
+      else
+        SUBMISSION_SOURCE_CONFIG="configs/submission.json"
+      fi
+    fi
+    ;;
   c03)
     if [ -z "${SUBMISSION_SOURCE_CONFIG:-}" ]; then
       if [ -f "configs/submission_c03.json" ]; then
@@ -37,17 +46,8 @@ case "${SUBMISSION_CANDIDATE}" in
       fi
     fi
     ;;
-  tsvit)
-    if [ -z "${SUBMISSION_SOURCE_CONFIG:-}" ]; then
-      if [ -f "configs/submission_tsvit.json" ]; then
-        SUBMISSION_SOURCE_CONFIG="configs/submission_tsvit.json"
-      else
-        SUBMISSION_SOURCE_CONFIG="configs/submission.json"
-      fi
-    fi
-    ;;
   *)
-    echo "[submission] ERROR: CANDIDATE must be c03 or tsvit, got ${SUBMISSION_CANDIDATE}" >&2
+    echo "[submission] ERROR: CANDIDATE must be p6 or c03, got ${SUBMISSION_CANDIDATE}" >&2
     exit 1
     ;;
 esac

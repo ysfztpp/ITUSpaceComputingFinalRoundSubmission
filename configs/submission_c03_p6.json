@@ -23,6 +23,7 @@
   "batch_raster_reads": true,
   "max_batch_union_pixels": 262144,
   "max_batch_union_overread_ratio": 6.0,
+  "num_io_workers": 16,
   "use_crop_consistency": true,
   "stage_postprocess": "none",
   "use_point_stage_bijection": false,
